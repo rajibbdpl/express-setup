@@ -56,7 +56,7 @@ app.get("/", (req: Request, res: Response) => {
 
   } catch (error: unknown) {
     console.log("🚀 ~ error:", error)
-    res.status(500).json({ message: error?.message || "Failed to get", success: true });
+    res.status(500).json({ message: "Failed to get", success: true });
   }
 });
 
