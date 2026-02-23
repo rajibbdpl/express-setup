@@ -8,6 +8,10 @@ import cookieParser from "cookie-parser";
 import { errorMiddleware } from "./middlewares/error.middleware";
 
 const app = express();
+app.use((req, res, next) => {
+  console.log("Incoming request:", req.method, req.url);
+  next();
+});
 
 //trust the first proxy, clients original IP even if comming from cloudflare
 app.set("trust proxy", 1);
@@ -45,6 +49,16 @@ app.use(
     },
   }),
 );
+
+app.get("/", (req: Request, res: Response) => {
+  try {
+      return res.status(200).json({ message: "Hello demo ai", success: true });
+
+  } catch (error: unknown) {
+    console.log("🚀 ~ error:", error)
+    res.status(500).json({ message: error?.message || "Failed to get", success: true });
+  }
+});
 
 //global error handler (must be last)
 app.use(errorMiddleware);

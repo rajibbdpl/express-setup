@@ -25,12 +25,13 @@ const startServer = async () => {
     });
 
     // Graceful shutdown on SIGINT (e.g., Ctrl+C)
-    process.on("SIGINT", async () => {
+    process.on("SIGINT", () => {
       console.log("SIGINT received. Closing server...");
-      server.close(async () => {
-        await prisma.$disconnect();
-        console.log("Server and DB connection closed");
-        process.exit(0);
+      server.close(() => {
+        prisma.$disconnect().then(() => {
+          console.log("Server and DB connection closed");
+          process.exit(0);
+        });
       });
     });
 

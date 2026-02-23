@@ -1,7 +1,23 @@
-node_modules
-# Keep environment variables out of version control
+# Node modules
+node_modules/
+**/node_modules/
+
+# Build / dist folders
+dist/
+build/
+**/dist/
+**/build/
+
+# Environment files
 .env
+**/.env
 
-/src/generated/prisma
+# Logs
+*.log
+npm-debug.log*
 
-/src/generated/prisma
+**/.DS_Store
+
+**/generated
+
+**/.vscode
