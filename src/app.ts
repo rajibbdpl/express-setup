@@ -50,14 +50,112 @@ app.use(
   }),
 );
 
-app.get("/", (req: Request, res: Response) => {
-  try {
-      return res.status(200).json({ message: "Hello demo ai", success: true });
+// app.get("/", (req: Request, res: Response) => {
+//   try {
+//     return res.status(200).json({ message: "Hello demo ai", success: true });
+//   } catch (error: unknown) {
+//     console.log("🚀 ~ error:", error);
+//     res.status(500).json({ message: "Failed to get", success: true });
+//   }
+// });
 
-  } catch (error: unknown) {
-    console.log("🚀 ~ error:", error)
-    res.status(500).json({ message: "Failed to get", success: true });
+app.get("/messenger", (req, res) => {
+  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
+  console.log("🚀 ~ VERIFY_TOKEN:", VERIFY_TOKEN);
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode && token) {
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("WEBHOOK VERIFIED for messenger");
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(400);
   }
+});
+app.get("/webhook", (req, res) => {
+  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode && token) {
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("WEBHOOK VERIFIED for webhook");
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(400);
+  }
+});
+
+app.get("/facebook", (req, res) => {
+  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
+  console.log("🚀 ~ VERIFY_TOKEN:", VERIFY_TOKEN);
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode && token) {
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("WEBHOOK VERIFIED for facebook");
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(400);
+  }
+});
+
+app.get("/instagram", (req, res) => {
+  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
+  console.log("🚀 ~ VERIFY_TOKEN:", VERIFY_TOKEN);
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode && token) {
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("WEBHOOK VERIFIED for instagram");
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(400);
+  }
+});
+
+app.get("/whatsapp", (req, res) => {
+  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
+  console.log("🚀 ~ VERIFY_TOKEN:", VERIFY_TOKEN);
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode && token) {
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("WEBHOOK VERIFIED for whatsapp");
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  } else {
+    res.sendStatus(400);
+  }
+});
+
+app.get("/auth/instagram/callback", (req, res) => {
+  // Here you will handle the code returned by Instagram
+  const code = req.query.code;
+  res.send("Instagram OAuth code received: " + code);
 });
 
 //global error handler (must be last)
