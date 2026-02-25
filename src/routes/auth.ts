@@ -1,0 +1,49 @@
+import { Router } from "express";
+import axios from "axios";
+
+const authRouter = Router();
+
+//redirect user to tiktok oauth
+authRouter.get("/tiktok", (req, res) => {
+  const params = new URLSearchParams({
+    client_key: process.env.TIKTOK_CLIENT_KEY!,
+    scope: "user.info.basic,video.list,video.upload",
+    response_type: "code",
+    redirect_uri: process.env.TIKTOK_REDIRECT_URI!,
+    state: "random_state_string", // Use a real random value + session in production
+  });
+
+  res.redirect(`https://www.tiktok.com/v2/auth/authorize/?${params}`);
+});
+
+// handle callback and exchange code for tokens
+authRouter.get("/tiktok/callback", async (req, res) => {
+  const { code } = req.query;
+  const body = {
+    client_key: process.env.TIKTOK_CLIENT_KEY,
+    client_secret: process.env.TIKTOK_CLIENT_SECRET,
+    code,
+    grant_type: "authorization_code",
+    redirect_uri: process.env.TIKTOK_REDIRECT_URI,
+  };
+  try {
+    const response = await axios.post(
+      "https://open.tiktokapis.com/v2/oauth/token/",
+      body,
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+    );
+
+    const { access_token, refresh_token, open_id } = response.data;
+
+    //save tokens in database associated with user
+
+    req.app.locals.tiktokTokens = { access_token, refresh_token, open_id };
+
+    res.redirect("http://localhost:3000?tiktok=connected");
+  } catch (err: any) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: "OAuth failed" });
+  }
+});
+
+export default authRouter;

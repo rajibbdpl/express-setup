@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import express from "express";
 import "dotenv/config";
 import helmet from "helmet";
 import morgan from "morgan";
@@ -6,6 +6,11 @@ import compression from "compression";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { errorMiddleware } from "./middlewares/error.middleware";
+import { verifyWebHook } from "./utils/verify-webhook";
+import whatsappRoutes from "./routes/whatsapp.routes";
+import authRouter from "./routes/auth";
+import tiktokRouter from "./routes/tiktok.routes";
+
 
 const app = express();
 app.use((req, res, next) => {
@@ -13,12 +18,14 @@ app.use((req, res, next) => {
   next();
 });
 
+
 //trust the first proxy, clients original IP even if comming from cloudflare
 app.set("trust proxy", 1);
 
 //this is used to set various HTTP headers and implement security in express
 app.use(helmet());
 
+console.log("allowed", process.env.ALLOWED_ORIGINS);
 // allow the requests from these origins to be processed
 app.use(
   cors({ origin: process.env.ALLOWED_ORIGINS?.split(","), credentials: true }),
@@ -59,98 +66,18 @@ app.use(
 //   }
 // });
 
-app.get("/messenger", (req, res) => {
-  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
-  console.log("🚀 ~ VERIFY_TOKEN:", VERIFY_TOKEN);
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
+app.get("/messenger", verifyWebHook("messenger"));
+app.get("/webhook", verifyWebHook("webhook"));
+app.get("/facebook", verifyWebHook("facebook"));
+app.get("/instagram", verifyWebHook("instagram"));
+app.get("/whatsapp", verifyWebHook("whatsapp"));
 
-  if (mode && token) {
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK VERIFIED for messenger");
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
-  } else {
-    res.sendStatus(400);
-  }
-});
-app.get("/webhook", (req, res) => {
-  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
 
-  if (mode && token) {
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK VERIFIED for webhook");
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
-  } else {
-    res.sendStatus(400);
-  }
-});
+app.use("/auth", authRouter);
+app.use("/api/tiktok", tiktokRouter);
 
-app.get("/facebook", (req, res) => {
-  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
-  console.log("🚀 ~ VERIFY_TOKEN:", VERIFY_TOKEN);
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
 
-  if (mode && token) {
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK VERIFIED for facebook");
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
-  } else {
-    res.sendStatus(400);
-  }
-});
-
-app.get("/instagram", (req, res) => {
-  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
-  console.log("🚀 ~ VERIFY_TOKEN:", VERIFY_TOKEN);
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode && token) {
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK VERIFIED for instagram");
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
-  } else {
-    res.sendStatus(400);
-  }
-});
-
-app.get("/whatsapp", (req, res) => {
-  const VERIFY_TOKEN = process.env.NGROK_VERIFY_TOKEN;
-  console.log("🚀 ~ VERIFY_TOKEN:", VERIFY_TOKEN);
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode && token) {
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-      console.log("WEBHOOK VERIFIED for whatsapp");
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
-  } else {
-    res.sendStatus(400);
-  }
-});
+app.use("/whatsapp", whatsappRoutes);
 
 app.get("/auth/instagram/callback", (req, res) => {
   // Here you will handle the code returned by Instagram
