@@ -51,6 +51,35 @@ router.post("/post/init", async (req, res) => {
   }
 });
 
+router.post("/get/all", async (req, res) => {
+  const tokens = getTokens(req);
+
+  if (!tokens)
+    return res.status(401).json({ error: "Not authenticated with TikTok" });
+
+  const { access_token } = tokens;
+
+  try {
+    const response = await axios.post(
+      `https://open.tiktokapis.com/v2/video/list/`,
+      {
+        max_count: 20,
+        fields: ["id", "title", "create_time", "comment_count"],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    return response.data;
+  } catch (error) {
+    console.log("🚀 ~ error:", error);
+  }
+});
+
 //get commensts for a video
 router.get("/comments/:videoId", async (req, res) => {
   const tokens = getTokens(req);

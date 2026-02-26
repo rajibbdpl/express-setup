@@ -18,7 +18,20 @@ authRouter.get("/tiktok", (req, res) => {
 
 // handle callback and exchange code for tokens
 authRouter.get("/tiktok/callback", async (req, res) => {
-  const { code } = req.query;
+  const { code, error, scopes } = req.query;
+  console.log("🚀 ~ error:", error);
+  if (error) {
+    console.error("TikTok returned error:", error);
+    return res.redirect(`${process.env.FRONTEND_URL}/connect?error=${error}`);
+  }
+
+  if (!code) {
+    console.error("No code in callback");
+    return res.status(400).json({ error: "Missing code" });
+  }
+
+  console.log("Code received:", code);
+  console.log("Scopes granted:", scopes);
   const body = {
     client_key: process.env.TIKTOK_CLIENT_KEY,
     client_secret: process.env.TIKTOK_CLIENT_SECRET,
@@ -29,7 +42,7 @@ authRouter.get("/tiktok/callback", async (req, res) => {
   try {
     const response = await axios.post(
       "https://open.tiktokapis.com/v2/oauth/token/",
-      body,
+      body.toString(),
       { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
     );
 
@@ -39,11 +52,16 @@ authRouter.get("/tiktok/callback", async (req, res) => {
 
     req.app.locals.tiktokTokens = { access_token, refresh_token, open_id };
 
-    res.redirect("http://localhost:3000?tiktok=connected");
+    res.redirect("http://localhost:3000/tiktok?tiktok=connected");
   } catch (err: any) {
     console.error(err.response?.data || err.message);
     res.status(500).json({ error: "OAuth failed" });
   }
+});
+
+authRouter.post("/tiktok/logout", (req, res) => {
+  req.app.locals.tiktokTokens = null;
+  res.json({ success: false });
 });
 
 export default authRouter;
