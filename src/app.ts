@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import express from "express";
 import "dotenv/config";
 import helmet from "helmet";
 import morgan from "morgan";
@@ -6,12 +6,13 @@ import compression from "compression";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { errorMiddleware } from "./middlewares/error.middleware";
+import { verifyWebHook } from "./utils/verify-webhook";
+import authRouter from "./routes/auth";
+import session from "express-session";
+import tiktokRouter from "./routes/tiktok.routes";
+import metaWebHookRouter from "./webhooks/meta.webhook";
 
 const app = express();
-app.use((req, res, next) => {
-  console.log("Incoming request:", req.method, req.url);
-  next();
-});
 
 //trust the first proxy, clients original IP even if comming from cloudflare
 app.set("trust proxy", 1);
@@ -23,6 +24,8 @@ app.use(helmet());
 app.use(
   cors({ origin: process.env.ALLOWED_ORIGINS?.split(","), credentials: true }),
 );
+
+app.use("/webhook", metaWebHookRouter);
 
 //for every req, if body contains JSON, convert it into a js object and add to req.body
 app.use(express.json({ limit: "10kb" }));
@@ -50,15 +53,21 @@ app.use(
   }),
 );
 
-app.get("/", (req: Request, res: Response) => {
-  try {
-      return res.status(200).json({ message: "Hello demo ai", success: true });
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET!,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    },
+  }),
+);
 
-  } catch (error: unknown) {
-    console.log("🚀 ~ error:", error)
-    res.status(500).json({ message: "Failed to get", success: true });
-  }
-});
+app.use("/auth", authRouter);
+app.use("/api/tiktok", tiktokRouter);
 
 //global error handler (must be last)
 app.use(errorMiddleware);

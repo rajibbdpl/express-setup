@@ -1,23 +1,336 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
+  output = "../src/generated/prisma/client"
 }
 
 datasource db {
   provider = "postgresql"
 }
 
+//1. This will bw the users
 model User {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid())
   email     String   @unique
   name      String?
+  avatarUrl String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Meta OAuth
+  metaUserId      String?   @unique // Facebook user ID
+  metaAccessToken String? // long-lived user access token
+  metaTokenExpiry DateTime? // track expiry for refresh cron
+
+  // Relations
+  sessions         Session[]
+  metaPages        MetaPage[]
+  whatsappAccounts WhatsAppAccount[]
+
+  @@map("users")
 }
 
+//2. used for session i.e jwt tracks
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  ipAddress String?
+  userAgent String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+//facebook + instagram (page are bridge)
+model MetaPage {
+  id              String   @id @default(cuid())
+  userId          String
+  pageId          String   @unique //fb page id
+  pageName        String
+  pageCategory    String?
+  pageAccessToken String // never expires if generated from long-lived token
+  pictureUrl      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Linked Instagram Business Account (1 page → 1 IG account)
+  instagramAccount InstagramAccount?
+
+  // Relations
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fbPosts         FacebookPost[]
+  fbConversations FacebookConversation[]
+
+  @@map("meta_pages")
+}
+
+// instagram
+model InstagramAccount {
+  id             String   @id @default(cuid())
+  metaPageId     String   @unique
+  igAccountId    String   @unique // Instagram Business Account ID
+  username       String?
+  name           String?
+  profilePicUrl  String?
+  followersCount Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  metaPage        MetaPage         @relation(fields: [metaPageId], references: [id], onDelete: Cascade)
+  posts           InstagramPost[]
+  igConversations IgConversation[]
+
+  @@map("instagram_accounts")
+}
+
+model InstagramPost {
+  id            String    @id @default(cuid())
+  igAccountId   String
+  igMediaId     String    @unique // Instagram media ID from API
+  mediaType     String // IMAGE, VIDEO, CAROUSEL_ALBUM
+  mediaUrl      String?
+  thumbnailUrl  String?
+  caption       String?
+  permalink     String?
+  likeCount     Int?
+  commentsCount Int?
+  timestamp     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  igAccount InstagramAccount   @relation(fields: [igAccountId], references: [id], onDelete: Cascade)
+  comments  InstagramComment[]
+
+  @@map("instagram_posts")
+}
+
+model InstagramComment {
+  id          String    @id @default(cuid())
+  igPostId    String
+  igCommentId String    @unique
+  parentId    String? // null = top-level comment, set = reply
+  username    String?
+  text        String
+  timestamp   DateTime?
+  createdAt   DateTime  @default(now())
+
+  // Self-referencing for threaded replies
+  parent  InstagramComment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies InstagramComment[] @relation("CommentReplies")
+
+  igPost InstagramPost @relation(fields: [igPostId], references: [id], onDelete: Cascade)
+
+  @@map("instagram_comments")
+}
+
+model IgConversation {
+  id                  String   @id @default(cuid())
+  igAccountId         String
+  igConversationId    String   @unique
+  participantIgId     String?
+  participantUsername String?
+  updatedAt           DateTime @updatedAt
+  createdAt           DateTime @default(now())
+
+  igAccount InstagramAccount @relation(fields: [igAccountId], references: [id], onDelete: Cascade)
+  messages  IgMessage[]
+
+  @@map("ig_conversations")
+}
+
+model IgMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  igMessageId    String           @unique
+  fromId         String?
+  fromUsername   String?
+  text           String?
+  attachmentUrl  String?
+  direction      MessageDirection
+  timestamp      DateTime?
+  createdAt      DateTime         @default(now())
+
+  conversation IgConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("ig_messages")
+}
+
+// ---- FACEBOOK ----
+
+model FacebookPost {
+  id          String    @id @default(cuid())
+  metaPageId  String
+  fbPostId    String    @unique
+  message     String?
+  story       String?
+  fullPicture String?
+  permalink   String?
+  createdTime DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  metaPage MetaPage          @relation(fields: [metaPageId], references: [id], onDelete: Cascade)
+  comments FacebookComment[]
+
+  @@map("facebook_posts")
+}
+
+model FacebookComment {
+  id          String    @id @default(cuid())
+  fbPostId    String
+  fbCommentId String    @unique
+  parentId    String? // null = top-level, set = reply
+  fromId      String?
+  fromName    String?
+  message     String
+  createdTime DateTime?
+  createdAt   DateTime  @default(now())
+
+  // Self-referencing for threaded replies
+  parent  FacebookComment?  @relation("FbCommentReplies", fields: [parentId], references: [id])
+  replies FacebookComment[] @relation("FbCommentReplies")
+
+  fbPost FacebookPost @relation(fields: [fbPostId], references: [id], onDelete: Cascade)
+
+  @@map("facebook_comments")
+}
+
+model FacebookConversation {
+  id               String    @id @default(cuid())
+  metaPageId       String
+  fbConversationId String    @unique
+  participantId    String?
+  participantName  String?
+  snippet          String? // last message preview
+  updatedTime      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  metaPage MetaPage          @relation(fields: [metaPageId], references: [id], onDelete: Cascade)
+  messages FacebookMessage[]
+
+  @@map("facebook_conversations")
+}
+
+model FacebookMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  fbMessageId    String           @unique
+  fromId         String?
+  fromName       String?
+  text           String?
+  attachmentUrl  String?
+  direction      MessageDirection
+  createdTime    DateTime?
+  createdAt      DateTime         @default(now())
+
+  conversation FacebookConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("facebook_messages")
+}
+
+
+//whatsapp business
+model WhatsAppAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  phoneNumberId     String   @unique // from Meta dashboard
+  businessAccountId String
+  phoneNumber       String?
+  displayName       String?
+  systemUserToken   String // from Meta Business System User
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversations WaConversation[]
+
+  @@map("whatsapp_accounts")
+}
+
+model WaConversation {
+  id            String    @id @default(cuid())
+  waAccountId   String
+  contactPhone  String // e.g. "15551234567"
+  contactName   String?
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  waAccount WhatsAppAccount @relation(fields: [waAccountId], references: [id], onDelete: Cascade)
+  messages  WaMessage[]
+
+  @@index([waAccountId, contactPhone])
+  @@map("wa_conversations")
+}
+
+model WaMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  waMessageId    String           @unique // message ID returned by Meta API
+  direction      MessageDirection
+  type           WaMessageType // text, image, audio, document, etc.
+  text           String?
+  mediaUrl       String?
+  mediaType      String?
+  caption        String?
+  status         WaMessageStatus // sent, delivered, read, failed
+  timestamp      DateTime?
+  createdAt      DateTime         @default(now())
+
+  conversation WaConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("wa_messages")
+}
+
+
+//webhook event types
+model WebhookEvent {
+  id         String   @id @default(cuid())
+  platform   Platform
+  eventType  String // "message", "comment", "status", etc.
+  payload    Json // raw payload from Meta
+  processed  Boolean  @default(false)
+  error      String? // if processing failed
+  receivedAt DateTime @default(now())
+
+  @@index([platform, processed])
+  @@map("webhook_events")
+}
+
+
+enum MessageDirection {
+  INBOUND // received from user
+  OUTBOUND // sent by your page/number
+}
+
+enum WaMessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  STICKER
+  LOCATION
+  CONTACTS
+  TEMPLATE
+  INTERACTIVE
+  UNKNOWN
+}
+
+enum WaMessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum Platform {
+  FACEBOOK
+  INSTAGRAM
+  WHATSAPP
+}
