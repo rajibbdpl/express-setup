@@ -7,17 +7,12 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { errorMiddleware } from "./middlewares/error.middleware";
 import { verifyWebHook } from "./utils/verify-webhook";
-import whatsappRoutes from "./routes/whatsapp.routes";
 import authRouter from "./routes/auth";
+import session from "express-session";
 import tiktokRouter from "./routes/tiktok.routes";
-
+import metaWebHookRouter from "./webhooks/meta.webhook";
 
 const app = express();
-app.use((req, res, next) => {
-  console.log("Incoming request:", req.method, req.url);
-  next();
-});
-
 
 //trust the first proxy, clients original IP even if comming from cloudflare
 app.set("trust proxy", 1);
@@ -25,11 +20,12 @@ app.set("trust proxy", 1);
 //this is used to set various HTTP headers and implement security in express
 app.use(helmet());
 
-console.log("allowed", process.env.ALLOWED_ORIGINS);
 // allow the requests from these origins to be processed
 app.use(
   cors({ origin: process.env.ALLOWED_ORIGINS?.split(","), credentials: true }),
 );
+
+app.use("/webhook", metaWebHookRouter);
 
 //for every req, if body contains JSON, convert it into a js object and add to req.body
 app.use(express.json({ limit: "10kb" }));
@@ -57,33 +53,21 @@ app.use(
   }),
 );
 
-// app.get("/", (req: Request, res: Response) => {
-//   try {
-//     return res.status(200).json({ message: "Hello demo ai", success: true });
-//   } catch (error: unknown) {
-//     console.log("🚀 ~ error:", error);
-//     res.status(500).json({ message: "Failed to get", success: true });
-//   }
-// });
-
-app.get("/messenger", verifyWebHook("messenger"));
-app.get("/webhook", verifyWebHook("webhook"));
-app.get("/facebook", verifyWebHook("facebook"));
-app.get("/instagram", verifyWebHook("instagram"));
-app.get("/whatsapp", verifyWebHook("whatsapp"));
-
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET!,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    },
+  }),
+);
 
 app.use("/auth", authRouter);
 app.use("/api/tiktok", tiktokRouter);
-
-
-app.use("/whatsapp", whatsappRoutes);
-
-app.get("/auth/instagram/callback", (req, res) => {
-  // Here you will handle the code returned by Instagram
-  const code = req.query.code;
-  res.send("Instagram OAuth code received: " + code);
-});
 
 //global error handler (must be last)
 app.use(errorMiddleware);

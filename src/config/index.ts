@@ -11,6 +11,16 @@ export const config = {
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
 };
 
+export const metaConfig = {
+  META_APP_ID: process.env.META_APP_ID,
+  META_APP_SECRET: process.env.META_APP_SECRET,
+  META_USER_ACCESS_TOKEN: process.env.META_USER_ACCESS_TOKEN,
+  META_REDIRECT_URI: process.env.META_REDIRECT_URI,
+  WEBHOOK_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN,
+};
+
+export const tiktokConfig = {};
+
 //these are the required variables
 const required = ["DATABASE_URL", "JWT_SECRET", "ALLOWED_ORIGINS"];
 
