@@ -7,7 +7,6 @@ import { subscribePageToWebHook } from "@/utils/meta";
 const authRouter = Router();
 
 const { META_APP_ID, META_REDIRECT_URI, META_APP_SECRET } = metaConfig;
-console.log("🚀 ~ metaConfig:", metaConfig);
 
 //redirect user to tiktok oauth
 authRouter.get("/tiktok", (req, res) => {
