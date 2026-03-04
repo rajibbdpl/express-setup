@@ -9,6 +9,8 @@ export const config = {
   JWT_SECRET: process.env.JWT_SECRET as string,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "7d",
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+  BASE_URL: process.env.BASE_URL,
+  BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET || process.env.JWT_SECRET,
 };
 
 export const metaConfig = {

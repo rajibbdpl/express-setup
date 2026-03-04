@@ -36,8 +36,9 @@ facebookRouter.get(
   "/conversations/:conversationId/messages",
   async (req: Request, res: Response) => {
     try {
+      const conversationId = req.params.conversationId as string;
       const messages = await prisma.facebookMessage.findMany({
-        where: { conversationId: req.params.conversationId },
+        where: { conversationId },
         orderBy: { createdTime: "asc" },
       });
 
@@ -53,10 +54,11 @@ facebookRouter.post(
   "/conversations/:conversationId/reply",
   async (req: Request, res: Response) => {
     const { text } = req.body;
+    const conversationId = req.params.conversationId as string;
 
     try {
       const conversation = await prisma.facebookConversation.findUnique({
-        where: { id: req.params.conversationId },
+        where: { id: conversationId },
         include: { metaPage: true },
       });
 

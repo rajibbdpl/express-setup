@@ -21,8 +21,6 @@ metaWebhookRouter.post(
   "/meta",
   raw({ type: "application/json" }),
   async (req: Request, res: Response) => {
-    console.log("📦 Webhook body:", JSON.stringify(req.body, null, 2)); // ← add this
-
     console.log("🔔 Webhook POST hit"); // ← add this as very first line
 
     res.sendStatus(200); // always respond immediately

@@ -6,11 +6,13 @@ import compression from "compression";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { errorMiddleware } from "./middlewares/error.middleware";
-import { verifyWebHook } from "./utils/verify-webhook";
-import authRouter from "./routes/auth";
+import oauthRouter from "./routes/oauth.routes";
 import session from "express-session";
 import tiktokRouter from "./routes/tiktok.routes";
 import metaWebHookRouter from "./webhooks/meta.webhook";
+import accountsRouter from "./routes/accounts";
+import { auth } from "./lib/auth";
+import { toNodeHandler } from "better-auth/node";
 
 const app = express();
 
@@ -66,8 +68,11 @@ app.use(
   }),
 );
 
-app.use("/auth", authRouter);
+app.use("/api/auth", toNodeHandler(auth));
+
+app.use("/oauth", oauthRouter);
 app.use("/api/tiktok", tiktokRouter);
+app.use("/api/v1/accounts", accountsRouter);
 
 //global error handler (must be last)
 app.use(errorMiddleware);
