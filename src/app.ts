@@ -7,10 +7,10 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { errorMiddleware } from "./middlewares/error.middleware";
 import oauthRouter from "./routes/oauth.routes";
-import session from "express-session";
 import tiktokRouter from "./routes/tiktok.routes";
 import metaWebHookRouter from "./webhooks/meta.webhook";
 import accountsRouter from "./routes/accounts";
+import facebookRouter from "./routes/facebook.routes";
 import { auth } from "./lib/auth";
 import { toNodeHandler } from "better-auth/node";
 
@@ -55,24 +55,12 @@ app.use(
   }),
 );
 
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET!,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    },
-  }),
-);
-
 app.use("/api/auth", toNodeHandler(auth));
 
 app.use("/oauth", oauthRouter);
 app.use("/api/tiktok", tiktokRouter);
 app.use("/api/v1/accounts", accountsRouter);
+app.use("/api/v1/facebook", facebookRouter);
 
 //global error handler (must be last)
 app.use(errorMiddleware);
