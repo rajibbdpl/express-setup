@@ -42,7 +42,7 @@ metaWebhookRouter.post(
             if (!event.message) continue;
 
             const senderId = event.sender.id;
-            const pageId = event.recipient.id;
+            const recipientId = event.recipient.id;
             const text = event.message.text;
             const mid = event.message.mid;
             const timestamp = new Date(event.timestamp);
@@ -51,24 +51,34 @@ metaWebhookRouter.post(
             // ✅ Handle Facebook echo messages (outbound from Page)
             if (isEcho) {
               console.log("🔄 Processing Facebook echo message (outbound)");
-              console.log(`💬 Echo from Page ${pageId} to customer ${senderId}: ${text}`);
+              
+              // For echo messages: sender is YOUR Page, recipient is the CUSTOMER
+              const pageId = senderId;        // Your Page ID
+              const customerId = recipientId;  // Customer ID
+              
+              console.log(`💬 Echo from Page ${pageId} to customer ${customerId}: ${text}`);
 
               const page = await prisma.metaPage.findUnique({
                 where: { pageId },
               });
+              
               if (!page) {
-                console.warn("Page not found in DB:", pageId);
+                console.error("❌ Page not found in DB:", pageId);
+                const allPages = await prisma.metaPage.findMany({
+                  select: { pageId: true, pageName: true }
+                });
+                console.error("❌ Available pages in DB:", allPages.map(p => `${p.pageId} (${p.pageName})`).join(', '));
                 continue;
               }
 
-              // For echo, senderId is the customer
+              // Use correct conversation ID format (pageId_customerId)
               const conversation = await prisma.facebookConversation.upsert({
-                where: { fbConversationId: `${pageId}_${senderId}` },
+                where: { fbConversationId: `${pageId}_${customerId}` },
                 create: {
                   metaPageId: page.id,
-                  fbConversationId: `${pageId}_${senderId}`,
-                  participantId: senderId,
-                  participantName: senderId,
+                  fbConversationId: `${pageId}_${customerId}`,
+                  participantId: customerId,
+                  participantName: customerId,
                   updatedTime: timestamp,
                 },
                 update: {
@@ -101,30 +111,38 @@ metaWebhookRouter.post(
             }
 
             // Regular inbound message from customer
-            console.log(`💬 Facebook message from ${senderId}: ${text}`);
+            // For regular messages: sender is the CUSTOMER, recipient is YOUR Page
+            const pageId = recipientId;  // Page ID
+            const customerId = senderId; // Customer ID
+            
+            console.log(`💬 Facebook message from ${customerId}: ${text}`);
 
             const page = await prisma.metaPage.findUnique({
               where: { pageId },
             });
             if (!page) {
-              console.warn("Page not found in DB:", pageId);
+              console.error("❌ Page not found in DB:", pageId);
+              const allPages = await prisma.metaPage.findMany({
+                select: { pageId: true, pageName: true }
+              });
+              console.error("❌ Available pages in DB:", allPages.map(p => `${p.pageId} (${p.pageName})`).join(', '));
               continue;
             }
 
             const senderName = await getSenderName(
-              senderId,
+              customerId,
               pageId,
               page.pageAccessToken,
             );
             console.log("🚀 ~ senderName:", senderName);
 
             const conversation = await prisma.facebookConversation.upsert({
-              where: { fbConversationId: `${pageId}_${senderId}` },
+              where: { fbConversationId: `${pageId}_${customerId}` },
               create: {
                 metaPageId: page.id,
-                fbConversationId: `${pageId}_${senderId}`,
-                participantId: senderId,
-                participantName: senderName || senderId,
+                fbConversationId: `${pageId}_${customerId}`,
+                participantId: customerId,
+                participantName: senderName || customerId,
                 updatedTime: timestamp,
               },
               update: {
@@ -144,7 +162,7 @@ metaWebhookRouter.post(
                 data: {
                   conversationId: conversation.id,
                   fbMessageId: mid,
-                  fromId: senderId,
+                  fromId: customerId,
                   text: text ?? null,
                   direction: "INBOUND",
                   createdTime: timestamp,

@@ -102,3 +102,54 @@ export const subscribeAppToInstagramWebhook = async () => {
     throw err;
   }
 };
+
+export const subscribeAppToFacebookPageWebhook = async () => {
+  try {
+    const META_APP_ID = process.env.META_APP_ID;
+    const META_APP_SECRET = process.env.META_APP_SECRET;
+    const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
+    const WEBHOOK_URL = process.env.NGROK_LINK || process.env.ALLOWED_ORIGINS;
+
+    if (!META_APP_ID || !META_APP_SECRET || !VERIFY_TOKEN || !WEBHOOK_URL) {
+      throw new Error("Missing required environment variables for Facebook Page webhook subscription");
+    }
+
+    console.log("🔄 Getting Facebook App access token for Page webhooks...");
+    const tokenRes = await axios.get(
+      `https://graph.facebook.com/v19.0/oauth/access_token`,
+      {
+        params: {
+          client_id: META_APP_ID,
+          client_secret: META_APP_SECRET,
+          grant_type: 'client_credentials',
+        },
+      }
+    );
+    const appAccessToken = tokenRes.data.access_token;
+    console.log("✅ App access token obtained");
+
+    console.log("🔄 Subscribing app to Facebook Page webhooks...");
+    console.log(`📍 Callback URL: ${WEBHOOK_URL}/webhook/meta`);
+    
+    const subscribeRes = await axios.post(
+      `https://graph.facebook.com/v19.0/${META_APP_ID}/subscriptions`,
+      {
+        object: 'page',
+        callback_url: `${WEBHOOK_URL}/webhook/meta`,
+        verify_token: VERIFY_TOKEN,
+        fields: 'messages,messaging_postbacks,message_echoes',
+      },
+      {
+        params: { access_token: appAccessToken },
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+    console.log('✅ Facebook Page webhook subscribed successfully:', subscribeRes.data);
+    return subscribeRes.data;
+  } catch (err: any) {
+    console.error('❌ Facebook Page webhook subscription failed:', 
+      err.response?.data || err.message);
+    throw err;
+  }
+};

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import axios from "axios";
 import { auth } from "@/lib/auth";
-import { subscribeAppToInstagramWebhook } from "@/utils/meta";
+import { subscribeAppToInstagramWebhook, subscribeAppToFacebookPageWebhook } from "@/utils/meta";
 import { prisma } from "@/config/database";
 
 const webhookDiagnosticsRouter = Router();
@@ -309,6 +309,34 @@ webhookDiagnosticsRouter.post("/resubscribe-facebook/:pageId", async (req: Reque
   }
 });
 
+webhookDiagnosticsRouter.post("/subscribe-facebook-page", async (req: Request, res: Response) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    
+    if (!session?.user) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    console.log("🔄 Manual Facebook Page webhook subscription requested...");
+
+    const result = await subscribeAppToFacebookPageWebhook();
+    
+    res.json({
+      success: true,
+      message: "Facebook Page webhook subscribed successfully at app level",
+      result,
+      note: "Your app is now subscribed to Facebook Page message webhooks. Make sure your pages are also subscribed at page level using /api/v1/webhooks/resubscribe-facebook/:pageId"
+    });
+  } catch (err: any) {
+    console.error('❌ Failed to subscribe Facebook Page webhook:', err.response?.data || err.message);
+    res.status(500).json({ 
+      error: "Failed to subscribe Facebook Page webhook",
+      details: err.response?.data || err.message,
+      hint: "Check that META_APP_ID, META_APP_SECRET, META_VERIFY_TOKEN, and NGROK_LINK/ALLOWED_ORIGINS environment variables are set"
+    });
+  }
+});
+
 webhookDiagnosticsRouter.get("/test", async (req: Request, res: Response) => {
   res.json({
     success: true,
@@ -316,9 +344,10 @@ webhookDiagnosticsRouter.get("/test", async (req: Request, res: Response) => {
     endpoints: {
       "GET /api/v1/webhooks/status": "Check current webhook subscriptions",
       "POST /api/v1/webhooks/subscribe-instagram": "Manually subscribe to Instagram webhooks",
+      "POST /api/v1/webhooks/subscribe-facebook-page": "Manually subscribe to Facebook Page webhooks (app-level)",
       "GET /api/v1/webhooks/database-check": "Check database state (IG accounts, pages, messages)",
       "GET /api/v1/webhooks/facebook-subscription/:pageId": "Check Facebook page webhook subscription",
-      "POST /api/v1/webhooks/resubscribe-facebook/:pageId": "Re-subscribe Facebook page with message_echoes",
+      "POST /api/v1/webhooks/resubscribe-facebook/:pageId": "Re-subscribe Facebook page with message_echoes (page-level)",
       "GET /api/v1/webhooks/test": "This test endpoint"
     },
     environment: {

@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import axios from "axios";
 import { metaConfig } from "@/config";
 import { prisma } from "@/config/database";
-import { subscribePageToWebHook, subscribeAppToInstagramWebhook } from "@/utils/meta";
+import { subscribePageToWebHook, subscribeAppToInstagramWebhook, subscribeAppToFacebookPageWebhook } from "@/utils/meta";
 import { auth } from "@/lib/auth";
 
 const oauthRouter = Router();
@@ -338,6 +338,15 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     } catch (igWebhookErr: any) {
       console.warn("⚠️ Instagram webhook subscription failed (may already be subscribed):", 
         igWebhookErr.response?.data?.error?.message || igWebhookErr.message);
+    }
+
+    try {
+      console.log("🔄 Subscribing app to Facebook Page webhooks...");
+      await subscribeAppToFacebookPageWebhook();
+      console.log("✅ Facebook Page webhook subscription completed");
+    } catch (fbWebhookErr: any) {
+      console.warn("⚠️ Facebook Page webhook subscription failed (may already be subscribed):", 
+        fbWebhookErr.response?.data?.error?.message || fbWebhookErr.message);
     }
 
     return res.redirect(`${process.env.ALLOWED_ORIGINS}/dashboard?meta=connected`);
