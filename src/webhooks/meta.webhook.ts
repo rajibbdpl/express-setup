@@ -1,10 +1,11 @@
 import { Router, Request, Response, raw } from "express";
 import { prisma } from "@/config/database";
+import { getSenderName } from "@/utils/meta";
+import axios from "axios";
 
 const metaWebhookRouter = Router();
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN!;
 
-// Verification (unchanged)
 metaWebhookRouter.get("/meta", (req: Request, res: Response) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -16,33 +17,92 @@ metaWebhookRouter.get("/meta", (req: Request, res: Response) => {
   return res.sendStatus(403);
 });
 
-// Receive events
 metaWebhookRouter.post(
   "/meta",
   raw({ type: "application/json" }),
   async (req: Request, res: Response) => {
-    console.log("🔔 Webhook POST hit"); // ← add this as very first line
-
-    res.sendStatus(200); // always respond immediately
+    console.log("🔔 Webhook POST hit");
+    res.sendStatus(200);
 
     try {
       const body = JSON.parse(req.body.toString());
 
+      console.log("=".repeat(80));
+      console.log("📦 WEBHOOK EVENT RECEIVED");
+      console.log("📦 Object Type:", body.object);
+      console.log("📦 Entry Count:", body.entry?.length || 0);
+      console.log("📦 Full Payload:", JSON.stringify(body, null, 2));
+      console.log("=".repeat(80));
+
       if (body.object === "page") {
+        console.log("💬 FACEBOOK WEBHOOK DETECTED");
         for (const entry of body.entry ?? []) {
+          console.log(`💬 Processing ${entry.messaging?.length || 0} Facebook messaging events`);
           for (const event of entry.messaging ?? []) {
-            // Only handle actual messages (not echoes of your own sends)
-            if (!event.message || event.message.is_echo) continue;
+            if (!event.message) continue;
 
-            const senderId = event.sender.id; // the user who messaged
-            const pageId = event.recipient.id; // your page
+            const senderId = event.sender.id;
+            const pageId = event.recipient.id;
             const text = event.message.text;
-            const mid = event.message.mid; // message ID
+            const mid = event.message.mid;
             const timestamp = new Date(event.timestamp);
+            const isEcho = event.message.is_echo;
 
-            console.log(`💬 New message from ${senderId}: ${text}`);
+            // ✅ Handle Facebook echo messages (outbound from Page)
+            if (isEcho) {
+              console.log("🔄 Processing Facebook echo message (outbound)");
+              console.log(`💬 Echo from Page ${pageId} to customer ${senderId}: ${text}`);
 
-            // Find the page in your DB
+              const page = await prisma.metaPage.findUnique({
+                where: { pageId },
+              });
+              if (!page) {
+                console.warn("Page not found in DB:", pageId);
+                continue;
+              }
+
+              // For echo, senderId is the customer
+              const conversation = await prisma.facebookConversation.upsert({
+                where: { fbConversationId: `${pageId}_${senderId}` },
+                create: {
+                  metaPageId: page.id,
+                  fbConversationId: `${pageId}_${senderId}`,
+                  participantId: senderId,
+                  participantName: senderId,
+                  updatedTime: timestamp,
+                },
+                update: {
+                  updatedTime: timestamp,
+                  snippet: text,
+                },
+              });
+
+              // Check for duplicate
+              const existingMessage = await prisma.facebookMessage.findUnique({
+                where: { fbMessageId: mid },
+              });
+
+              if (!existingMessage) {
+                await prisma.facebookMessage.create({
+                  data: {
+                    conversationId: conversation.id,
+                    fbMessageId: mid,
+                    fromId: pageId, // Page sent it
+                    text: text ?? null,
+                    direction: "OUTBOUND",
+                    createdTime: timestamp,
+                  },
+                });
+                console.log(`✅ Facebook echo message saved to DB: ${text}`);
+              } else {
+                console.log(`⚠️ Facebook echo message already exists: ${mid}`);
+              }
+              continue;
+            }
+
+            // Regular inbound message from customer
+            console.log(`💬 Facebook message from ${senderId}: ${text}`);
+
             const page = await prisma.metaPage.findUnique({
               where: { pageId },
             });
@@ -51,34 +111,251 @@ metaWebhookRouter.post(
               continue;
             }
 
-            // Find or create the conversation
+            const senderName = await getSenderName(
+              senderId,
+              pageId,
+              page.pageAccessToken,
+            );
+            console.log("🚀 ~ senderName:", senderName);
+
             const conversation = await prisma.facebookConversation.upsert({
               where: { fbConversationId: `${pageId}_${senderId}` },
               create: {
                 metaPageId: page.id,
                 fbConversationId: `${pageId}_${senderId}`,
                 participantId: senderId,
-                participantName: senderId, // fetch real name separately if needed
+                participantName: senderName || senderId,
                 updatedTime: timestamp,
               },
               update: {
+                participantName: senderName || undefined,
                 updatedTime: timestamp,
-                snippet: text, // update preview with latest message
+                snippet: text,
               },
             });
 
-            await prisma.facebookMessage.create({
-              data: {
-                conversationId: conversation.id,
-                fbMessageId: mid,
-                fromId: senderId,
-                text: text ?? null,
-                direction: "INBOUND",
-                createdTime: timestamp,
+            // Check for duplicate message before saving
+            const existingMessage = await prisma.facebookMessage.findUnique({
+              where: { fbMessageId: mid },
+            });
+
+            if (!existingMessage) {
+              await prisma.facebookMessage.create({
+                data: {
+                  conversationId: conversation.id,
+                  fbMessageId: mid,
+                  fromId: senderId,
+                  text: text ?? null,
+                  direction: "INBOUND",
+                  createdTime: timestamp,
+                },
+              });
+              console.log(`✅ Facebook message saved to DB: ${text}`);
+            } else {
+              console.log(`⚠️ Facebook message already exists: ${mid}`);
+            }
+          }
+        }
+      }
+
+      if (body.object === "instagram") {
+        console.log("📸 INSTAGRAM WEBHOOK DETECTED");
+        console.log("📸 Entry Count:", body.entry?.length || 0);
+        
+        if (!body.entry || body.entry.length === 0) {
+          console.log("⚠️ No entries in Instagram webhook payload");
+        }
+        
+        for (const entry of body.entry ?? []) {
+          console.log(`📸 Processing ${entry.messaging?.length || 0} Instagram messaging events`);
+          
+          if (!entry.messaging || entry.messaging.length === 0) {
+            console.log("⚠️ No messaging events in this Instagram entry");
+            continue;
+          }
+          
+          for (const event of entry.messaging ?? []) {
+            const senderId = event.sender.id;
+            const igAccountId = event.recipient.id;
+            const text = event.message?.text;
+            const mid = event.message?.mid;
+            const timestamp = new Date(event.timestamp * 1000);
+            const isEcho = event.message?.is_echo;
+
+            // ✅ Handle echo messages (outbound messages sent FROM Instagram app)
+            if (isEcho) {
+              console.log("🔄 Processing Instagram echo message (outbound)");
+              
+              // For echo messages: sender is YOUR IG account, recipient is the CUSTOMER
+              const pageIgAccountId = event.sender.id;
+              const customerIgId = event.recipient.id;
+              
+              console.log(`📸 Echo from YOUR IG account ${pageIgAccountId} to customer ${customerIgId}: ${text}`);
+
+              const igAccount = await prisma.instagramAccount.findUnique({
+                where: { igAccountId: pageIgAccountId },
+                include: { metaPage: true },
+              });
+
+              if (!igAccount) {
+                console.error("❌ Instagram account not found in DB:", pageIgAccountId);
+                const allIgAccounts = await prisma.instagramAccount.findMany({
+                  select: { igAccountId: true, username: true }
+                });
+                console.error("❌ Available IG accounts in DB:", allIgAccounts.map(acc => `${acc.igAccountId} (${acc.username})`).join(', '));
+                continue;
+              }
+
+              console.log(`✅ Found Instagram account: @${igAccount.username} (ID: ${igAccount.igAccountId})`);
+
+              // Use CUSTOMER ID in conversation lookup (not sender)
+              let conversation = await prisma.igConversation.findUnique({
+                where: { igConversationId: `${pageIgAccountId}_${customerIgId}` },
+              });
+
+              if (!conversation) {
+                conversation = await prisma.igConversation.create({
+                  data: {
+                    igAccountId: igAccount.id,
+                    igConversationId: `${pageIgAccountId}_${customerIgId}`,
+                    participantIgId: customerIgId,
+                    participantUsername: customerIgId,
+                    updatedAt: timestamp,
+                  },
+                });
+                console.log(`✅ Created new Instagram conversation: ${pageIgAccountId}_${customerIgId}`);
+              }
+
+              // Fetch CUSTOMER username (recipient, not sender)
+              let participantUsername = null;
+              try {
+                const response = await axios.get(
+                  `https://graph.facebook.com/v19.0/${customerIgId}`,
+                  {
+                    params: {
+                      fields: "username",
+                      access_token: igAccount.metaPage?.pageAccessToken,
+                    },
+                  }
+                );
+                participantUsername = response.data.username;
+                console.log(`✅ Fetched participant username: @${participantUsername}`);
+                
+                // Update conversation with username
+                await prisma.igConversation.update({
+                  where: { id: conversation.id },
+                  data: { participantUsername },
+                });
+              } catch (err: any) {
+                console.warn("⚠️ Could not fetch Instagram username:", err.message);
+              }
+
+              // Check for duplicate message before saving
+              const existingMessage = await prisma.igMessage.findUnique({
+                where: { igMessageId: mid },
+              });
+
+              if (existingMessage) {
+                console.log(`⚠️ Instagram echo message already exists: ${mid}`);
+                continue;
+              }
+
+              await prisma.igMessage.create({
+                data: {
+                  conversationId: conversation.id,
+                  igMessageId: mid,
+                  fromId: pageIgAccountId, // YOUR IG account sent it
+                  text: text ?? null,
+                  direction: "OUTBOUND",
+                  deliveryStatus: "SENT",
+                  timestamp,
+                },
+              });
+
+              console.log(`✅ Instagram echo message saved to DB: ${text}`);
+              continue;
+            }
+
+            // ✅ Process regular INBOUND message (from customer)
+            if (!event.message) {
+              console.log("⚠️ Skipping message with no content");
+              continue;
+            }
+
+            console.log(`📸 Instagram message from ${senderId}: ${text}`);
+            console.log(`📸 Recipient IG Account ID: ${igAccountId}`);
+
+            const igAccount = await prisma.instagramAccount.findUnique({
+              where: { igAccountId },
+              include: { metaPage: true },
+            });
+
+            if (!igAccount) {
+              console.error("❌ Instagram account not found in DB:", igAccountId);
+              const allIgAccounts = await prisma.instagramAccount.findMany({
+                select: { igAccountId: true, username: true }
+              });
+              console.error("❌ Available IG accounts in DB:", allIgAccounts.map(acc => `${acc.igAccountId} (${acc.username})`).join(', '));
+              continue;
+            }
+
+            console.log(`✅ Found Instagram account: @${igAccount.username} (ID: ${igAccount.igAccountId})`);
+
+            let senderUsername = null;
+            try {
+              console.log(`🔄 Fetching username for sender ID: ${senderId}`);
+              const response = await axios.get(
+                `https://graph.facebook.com/v19.0/${senderId}`,
+                {
+                  params: {
+                    fields: "username",
+                    access_token: igAccount.metaPage?.pageAccessToken,
+                  },
+                }
+              );
+              senderUsername = response.data.username;
+              console.log(`✅ Fetched sender username: @${senderUsername}`);
+            } catch (err: any) {
+              console.warn("⚠️ Could not fetch Instagram username:", err.message);
+              console.warn("⚠️ Using sender ID as username fallback");
+            }
+
+            const conversation = await prisma.igConversation.upsert({
+              where: { igConversationId: `${igAccountId}_${senderId}` },
+              create: {
+                igAccountId: igAccount.id,
+                igConversationId: `${igAccountId}_${senderId}`,
+                participantIgId: senderId,
+                participantUsername: senderUsername || senderId,
+                updatedAt: timestamp,
+              },
+              update: {
+                participantUsername: senderUsername || undefined,
+                updatedAt: timestamp,
               },
             });
 
-            console.log(`✅ Message saved to DB: ${text}`);
+            // Check for duplicate message before saving
+            const existingMessage = await prisma.igMessage.findUnique({
+              where: { igMessageId: mid },
+            });
+
+            if (!existingMessage) {
+              await prisma.igMessage.create({
+                data: {
+                  conversationId: conversation.id,
+                  igMessageId: mid,
+                  fromId: senderId,
+                  fromUsername: senderUsername,
+                  text: text ?? null,
+                  direction: "INBOUND",
+                  timestamp,
+                },
+              });
+              console.log(`✅ Instagram message saved to DB: ${text}`);
+            } else {
+              console.log(`⚠️ Instagram message already exists: ${mid}`);
+            }
           }
         }
       }

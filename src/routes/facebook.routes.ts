@@ -48,6 +48,8 @@ facebookRouter.get(
       }
 
       const conversationId = req.params.conversationId as string;
+      const limit = parseInt(req.query.limit as string) || 5;
+      const beforeId = req.query.before as string | undefined;
       
       const conversation = await prisma.facebookConversation.findFirst({
         where: { 
@@ -60,12 +62,33 @@ facebookRouter.get(
         return res.status(404).json({ error: "Conversation not found" });
       }
 
+      // If beforeId is provided, get messages older than that message
+      let whereClause: any = { conversationId };
+      
+      if (beforeId) {
+        const beforeMessage = await prisma.facebookMessage.findUnique({
+          where: { id: beforeId },
+          select: { createdTime: true },
+        });
+        
+        if (beforeMessage) {
+          whereClause.createdTime = { lt: beforeMessage.createdTime };
+        }
+      }
+
       const messages = await prisma.facebookMessage.findMany({
-        where: { conversationId },
-        orderBy: { createdTime: "asc" },
+        where: whereClause,
+        orderBy: { createdTime: "desc" },
+        take: limit,
       });
 
-      res.json({ messages });
+      const hasMore = messages.length === limit;
+
+      res.json({
+        messages: messages.reverse(),
+        hasMore,
+        nextCursor: hasMore && messages.length > 0 ? messages[0].id : null,
+      });
     } catch (err) {
       console.error("Fetch messages error:", err);
       res.status(500).json({ error: "Failed to fetch messages" });

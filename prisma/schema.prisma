@@ -176,6 +176,8 @@ model IgConversation {
   igAccount InstagramAccount @relation(fields: [igAccountId], references: [id], onDelete: Cascade)
   messages  IgMessage[]
 
+  @@index([igAccountId, updatedAt(sort: Desc)])
+  @@index([participantIgId])
   @@map("ig_conversations")
 }
 
@@ -188,11 +190,13 @@ model IgMessage {
   text           String?
   attachmentUrl  String?
   direction      MessageDirection
+  deliveryStatus DeliveryStatus   @default(PENDING)
   timestamp      DateTime?
   createdAt      DateTime         @default(now())
 
   conversation IgConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
+  @@index([conversationId, timestamp(sort: Desc)])
   @@map("ig_messages")
 }
 
@@ -250,6 +254,8 @@ model FacebookConversation {
   metaPage MetaPage          @relation(fields: [metaPageId], references: [id], onDelete: Cascade)
   messages FacebookMessage[]
 
+  @@index([metaPageId, updatedTime(sort: Desc)])
+  @@index([participantId])
   @@map("facebook_conversations")
 }
 
@@ -267,6 +273,7 @@ model FacebookMessage {
 
   conversation FacebookConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
+  @@index([conversationId, createdTime(sort: Desc)])
   @@map("facebook_messages")
 }
 
@@ -343,6 +350,12 @@ model WebhookEvent {
 enum MessageDirection {
   INBOUND // received from user
   OUTBOUND // sent by your page/number
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
 }
 
 enum WaMessageType {
