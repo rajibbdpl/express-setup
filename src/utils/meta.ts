@@ -31,6 +31,8 @@ export const getSenderName = async (
   pageAccessToken: string,
 ): Promise<string | null> => {
   try {
+    console.log(`🔍 Attempting to fetch name for user ${senderId} via Graph API...`);
+    
     const response = await axios.get(
       `https://graph.facebook.com/v19.0/${senderId}`,
       {
@@ -42,11 +44,26 @@ export const getSenderName = async (
     );
 
     const userData = response.data;
-    return userData?.name || `${userData?.first_name || ''} ${userData?.last_name || ''}`.trim() || null;
+    const name = userData?.name || `${userData?.first_name || ''} ${userData?.last_name || ''}`.trim() || null;
+    
+    if (name) {
+      console.log(`✅ Successfully fetched name for ${senderId}: ${name}`);
+    } else {
+      console.log(`⚠️ API returned empty name for ${senderId}`);
+    }
+    
+    return name;
   } catch (error: any) {
+    const errorData = error.response?.data?.error;
     console.error(
-      "Failed to fetch sender name via Graph API:",
-      error.response?.data ?? error.message,
+      `❌ Failed to fetch sender name for ${senderId}:`,
+      {
+        message: errorData?.message,
+        type: errorData?.type,
+        code: errorData?.code,
+        subcode: errorData?.error_subcode,
+        fbtrace_id: errorData?.fbtrace_id,
+      }
     );
     return null;
   }

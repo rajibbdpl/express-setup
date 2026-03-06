@@ -58,6 +58,14 @@ metaWebhookRouter.post(
               
               console.log(`💬 Echo from Page ${pageId} to customer ${customerId}: ${text}`);
 
+              // Log recipient info to check if name is in webhook payload
+              if (event.recipient) {
+                console.log(`📋 Recipient info from webhook:`, {
+                  id: event.recipient.id,
+                  name: event.recipient.name || "NOT INCLUDED IN PAYLOAD"
+                });
+              }
+
               const page = await prisma.metaPage.findUnique({
                 where: { pageId },
               });
@@ -117,6 +125,14 @@ metaWebhookRouter.post(
             
             console.log(`💬 Facebook message from ${customerId}: ${text}`);
 
+            // Log sender info to check if name is in webhook payload
+            if (event.sender) {
+              console.log(`📋 Sender info from webhook:`, {
+                id: event.sender.id,
+                name: event.sender.name || "NOT INCLUDED IN PAYLOAD"
+              });
+            }
+
             const page = await prisma.metaPage.findUnique({
               where: { pageId },
             });
@@ -129,12 +145,26 @@ metaWebhookRouter.post(
               continue;
             }
 
-            const senderName = await getSenderName(
-              customerId,
-              pageId,
-              page.pageAccessToken,
-            );
-            console.log("🚀 ~ senderName:", senderName);
+            // Try to get name from webhook payload first (works for testers!)
+            let senderName = null;
+
+            if (event.sender && event.sender.name) {
+              senderName = event.sender.name;
+              console.log(`✅ Got name from webhook payload: ${senderName} (no API call needed)`);
+            } else {
+              // Fallback to Graph API call
+              console.log(`⚠️ Name not in webhook payload, trying Graph API...`);
+              senderName = await getSenderName(
+                customerId,
+                pageId,
+                page.pageAccessToken,
+              );
+              if (senderName) {
+                console.log(`✅ Fetched name via Graph API: ${senderName}`);
+              } else {
+                console.log(`❌ Could not fetch name for ${customerId}, will use ID as fallback`);
+              }
+            }
 
             const conversation = await prisma.facebookConversation.upsert({
               where: { fbConversationId: `${pageId}_${customerId}` },

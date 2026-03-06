@@ -155,10 +155,10 @@ instagramRouter.post(
 
       console.log(`💾 Instagram message saved to DB (ID: ${savedMessage.id})`);
 
-      // ✅ STEP 2: Try to send via Instagram API
+      // ✅ STEP 2: Try to send via Instagram API (using Page ID, not IG Account ID)
       try {
         const sendRes = await axios.post(
-          `https://graph.facebook.com/v19.0/${conversation.igAccount.igAccountId}/messages`,
+          `https://graph.facebook.com/v19.0/${conversation.igAccount.metaPage.pageId}/messages`,
           {
             recipient: { id: conversation.participantIgId },
             message: { text },
@@ -166,13 +166,20 @@ instagramRouter.post(
           },
         );
 
-        // ✅ STEP 3: Update delivery status to SENT
+        // ✅ STEP 3: Update delivery status to SENT and use Instagram timestamp if available
+        const updateData: any = {
+          deliveryStatus: "SENT",
+          igMessageId: sendRes.data.message_id,
+        };
+
+        // If Instagram returns a timestamp, use it for consistency
+        if (sendRes.data.timestamp) {
+          updateData.timestamp = new Date(sendRes.data.timestamp * 1000);
+        }
+
         await prisma.igMessage.update({
           where: { id: savedMessage.id },
-          data: {
-            deliveryStatus: "SENT",
-            igMessageId: sendRes.data.message_id,
-          },
+          data: updateData,
         });
 
         console.log(`✅ Instagram message sent successfully: ${text}`);
