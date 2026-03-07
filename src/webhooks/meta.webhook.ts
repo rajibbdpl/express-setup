@@ -47,6 +47,17 @@ metaWebhookRouter.post(
             const mid = event.message.mid;
             const timestamp = new Date(event.timestamp);
             const isEcho = event.message.is_echo;
+            const attachments = event.message.attachments;
+
+            let attachmentUrl = null;
+            let attachmentType = null;
+            
+            if (attachments && attachments.length > 0) {
+              const attachment = attachments[0];
+              attachmentUrl = attachment.image_data?.url || attachment.payload?.url;
+              attachmentType = attachment.type;
+              console.log(`📎 Attachment found: type=${attachmentType}, url=${attachmentUrl}`);
+            }
 
             // ✅ Handle Facebook echo messages (outbound from Page)
             if (isEcho) {
@@ -95,25 +106,98 @@ metaWebhookRouter.post(
                 },
               });
 
-              // Check for duplicate
-              const existingMessage = await prisma.facebookMessage.findUnique({
+              // Check for duplicate with real ID
+              let existingMessage = await prisma.facebookMessage.findUnique({
                 where: { fbMessageId: mid },
               });
 
+              // If not found, check for temporary message to update
               if (!existingMessage) {
+                const thirtySecondsAgo = new Date(timestamp.getTime() - 30000);
+                existingMessage = await prisma.facebookMessage.findFirst({
+                  where: {
+                    conversationId: conversation.id,
+                    direction: "OUTBOUND",
+                    deliveryStatus: "PENDING",
+                    fbMessageId: { startsWith: "local_" },
+                    createdTime: { gte: thirtySecondsAgo },
+                  },
+                });
+                
+                if (existingMessage) {
+                  console.log(`🔄 Found temporary message to update: ${existingMessage.fbMessageId}`);
+                }
+              }
+
+              // Fetch attachment URL from API if not in webhook
+              if (!attachmentUrl && mid && page.pageAccessToken) {
+                try {
+                  console.log(`🔄 Fetching attachment URL from API for message ${mid}...`);
+                  const msgRes = await axios.get(
+                    `https://graph.facebook.com/v19.0/${mid}`,
+                    {
+                      params: {
+                        fields: 'attachments',
+                        access_token: page.pageAccessToken,
+                      },
+                    }
+                  );
+                  
+                  const attachmentsData = msgRes.data.attachments?.data || msgRes.data.attachments;
+                  if (attachmentsData && attachmentsData.length > 0) {
+                    attachmentUrl = attachmentsData[0].image_data?.url || attachmentsData[0].payload?.url;
+                    if (attachmentUrl) {
+                      console.log(`📎 Fetched attachment URL from API: ${attachmentUrl.substring(0, 100)}...`);
+                    }
+                  }
+                } catch (fetchErr: any) {
+                  console.warn(`⚠️ Could not fetch attachment URL from API: ${fetchErr.message}`);
+                }
+              }
+
+              if (!existingMessage) {
+                // No existing message, create new one
                 await prisma.facebookMessage.create({
                   data: {
                     conversationId: conversation.id,
                     fbMessageId: mid,
                     fromId: pageId, // Page sent it
                     text: text ?? null,
+                    attachmentUrl: attachmentUrl,
+                    attachmentType: attachmentType,
                     direction: "OUTBOUND",
+                    deliveryStatus: "SENT",
                     createdTime: timestamp,
                   },
                 });
                 console.log(`✅ Facebook echo message saved to DB: ${text}`);
+                if (attachmentUrl) {
+                  console.log(`📎 Attachment URL saved: ${attachmentUrl.substring(0, 100)}...`);
+                }
               } else {
-                console.log(`⚠️ Facebook echo message already exists: ${mid}`);
+                // Update existing message (either duplicate or temporary)
+                await prisma.facebookMessage.update({
+                  where: { id: existingMessage.id },
+                  data: {
+                    fbMessageId: mid,
+                    fromId: pageId,
+                    text: text ?? existingMessage.text,
+                    attachmentUrl: attachmentUrl ?? existingMessage.attachmentUrl,
+                    attachmentType: attachmentType ?? existingMessage.attachmentType,
+                    deliveryStatus: "SENT",
+                    createdTime: timestamp,
+                  },
+                });
+                
+                if (existingMessage.fbMessageId.startsWith("local_")) {
+                  console.log(`✅ Updated temporary message to SENT: ${text}`);
+                } else {
+                  console.log(`⚠️ Facebook echo message already exists: ${mid}`);
+                }
+                
+                if (attachmentUrl) {
+                  console.log(`📎 Attachment URL saved: ${attachmentUrl.substring(0, 100)}...`);
+                }
               }
               continue;
             }
@@ -182,6 +266,32 @@ metaWebhookRouter.post(
               },
             });
 
+            // Fetch attachment URL from API if not in webhook
+            if (!attachmentUrl && mid && page.pageAccessToken) {
+              try {
+                console.log(`🔄 Fetching attachment URL from API for inbound message ${mid}...`);
+                const msgRes = await axios.get(
+                  `https://graph.facebook.com/v19.0/${mid}`,
+                  {
+                    params: {
+                      fields: 'attachments',
+                      access_token: page.pageAccessToken,
+                    },
+                  }
+                );
+                
+                const attachmentsData = msgRes.data.attachments?.data || msgRes.data.attachments;
+                if (attachmentsData && attachmentsData.length > 0) {
+                  attachmentUrl = attachmentsData[0].image_data?.url || attachmentsData[0].payload?.url;
+                  if (attachmentUrl) {
+                    console.log(`📎 Fetched attachment URL from API: ${attachmentUrl.substring(0, 100)}...`);
+                  }
+                }
+              } catch (fetchErr: any) {
+                console.warn(`⚠️ Could not fetch attachment URL from API: ${fetchErr.message}`);
+              }
+            }
+
             // Check for duplicate message before saving
             const existingMessage = await prisma.facebookMessage.findUnique({
               where: { fbMessageId: mid },
@@ -194,11 +304,16 @@ metaWebhookRouter.post(
                   fbMessageId: mid,
                   fromId: customerId,
                   text: text ?? null,
+                  attachmentUrl: attachmentUrl,
+                  attachmentType: attachmentType,
                   direction: "INBOUND",
                   createdTime: timestamp,
                 },
               });
               console.log(`✅ Facebook message saved to DB: ${text}`);
+              if (attachmentUrl) {
+                console.log(`📎 Attachment URL saved: ${attachmentUrl}`);
+              }
             } else {
               console.log(`⚠️ Facebook message already exists: ${mid}`);
             }
@@ -229,6 +344,17 @@ metaWebhookRouter.post(
             const mid = event.message?.mid;
             const timestamp = new Date(event.timestamp * 1000);
             const isEcho = event.message?.is_echo;
+            const attachments = event.message?.attachments;
+
+            let attachmentUrl = null;
+            let attachmentType = null;
+            
+            if (attachments && attachments.length > 0) {
+              const attachment = attachments[0];
+              attachmentUrl = attachment.image_data?.url || attachment.payload?.url;
+              attachmentType = attachment.type;
+              console.log(`📎 Instagram attachment found: type=${attachmentType}, url=${attachmentUrl}`);
+            }
 
             // ✅ Handle echo messages (outbound messages sent FROM Instagram app)
             if (isEcho) {
@@ -298,29 +424,99 @@ metaWebhookRouter.post(
                 console.warn("⚠️ Could not fetch Instagram username:", err.message);
               }
 
-              // Check for duplicate message before saving
-              const existingMessage = await prisma.igMessage.findUnique({
+              // Check for duplicate message with real ID
+              let existingMessage = await prisma.igMessage.findUnique({
                 where: { igMessageId: mid },
               });
 
-              if (existingMessage) {
-                console.log(`⚠️ Instagram echo message already exists: ${mid}`);
-                continue;
+              // If not found, check for temporary message to update
+              if (!existingMessage) {
+                const thirtySecondsAgo = new Date(timestamp.getTime() - 30000);
+                existingMessage = await prisma.igMessage.findFirst({
+                  where: {
+                    conversationId: conversation.id,
+                    direction: "OUTBOUND",
+                    deliveryStatus: "PENDING",
+                    igMessageId: { startsWith: "local_" },
+                    timestamp: { gte: thirtySecondsAgo },
+                  },
+                });
+                
+                if (existingMessage) {
+                  console.log(`🔄 Found temporary Instagram message to update: ${existingMessage.igMessageId}`);
+                }
               }
 
-              await prisma.igMessage.create({
-                data: {
-                  conversationId: conversation.id,
-                  igMessageId: mid,
-                  fromId: pageIgAccountId, // YOUR IG account sent it
-                  text: text ?? null,
-                  direction: "OUTBOUND",
-                  deliveryStatus: "SENT",
-                  timestamp,
-                },
-              });
+              // Fetch attachment URL from API if not in webhook
+              if (!attachmentUrl && mid && igAccount.metaPage?.pageAccessToken) {
+                try {
+                  console.log(`🔄 Fetching Instagram attachment URL from API for message ${mid}...`);
+                  const msgRes = await axios.get(
+                    `https://graph.facebook.com/v19.0/${mid}`,
+                    {
+                      params: {
+                        fields: 'attachments',
+                        access_token: igAccount.metaPage.pageAccessToken,
+                      },
+                    }
+                  );
+                  
+                  const attachmentsData = msgRes.data.attachments?.data || msgRes.data.attachments;
+                  if (attachmentsData && attachmentsData.length > 0) {
+                    attachmentUrl = attachmentsData[0].image_data?.url || attachmentsData[0].payload?.url;
+                    if (attachmentUrl) {
+                      console.log(`📎 Fetched Instagram attachment URL from API: ${attachmentUrl.substring(0, 100)}...`);
+                    }
+                  }
+                } catch (fetchErr: any) {
+                  console.warn(`⚠️ Could not fetch Instagram attachment URL from API: ${fetchErr.message}`);
+                }
+              }
 
-              console.log(`✅ Instagram echo message saved to DB: ${text}`);
+              if (!existingMessage) {
+                // No existing message, create new one
+                await prisma.igMessage.create({
+                  data: {
+                    conversationId: conversation.id,
+                    igMessageId: mid,
+                    fromId: pageIgAccountId,
+                    text: text ?? null,
+                    attachmentUrl: attachmentUrl,
+                    attachmentType: attachmentType,
+                    direction: "OUTBOUND",
+                    deliveryStatus: "SENT",
+                    timestamp,
+                  },
+                });
+                console.log(`✅ Instagram echo message saved to DB: ${text}`);
+                if (attachmentUrl) {
+                  console.log(`📎 Attachment URL saved: ${attachmentUrl}`);
+                }
+              } else {
+                // Update existing message (either duplicate or temporary)
+                await prisma.igMessage.update({
+                  where: { id: existingMessage.id },
+                  data: {
+                    igMessageId: mid,
+                    fromId: pageIgAccountId,
+                    text: text ?? existingMessage.text,
+                    attachmentUrl: attachmentUrl ?? existingMessage.attachmentUrl,
+                    attachmentType: attachmentType ?? existingMessage.attachmentType,
+                    deliveryStatus: "SENT",
+                    timestamp,
+                  },
+                });
+                
+                if (existingMessage.igMessageId.startsWith("local_")) {
+                  console.log(`✅ Updated temporary Instagram message to SENT: ${text}`);
+                } else {
+                  console.log(`⚠️ Instagram echo message already exists: ${mid}`);
+                }
+                
+                if (attachmentUrl) {
+                  console.log(`📎 Attachment URL saved: ${attachmentUrl}`);
+                }
+              }
               continue;
             }
 
@@ -389,6 +585,44 @@ metaWebhookRouter.post(
             });
 
             if (!existingMessage) {
+              // Handle attachments for Instagram inbound messages
+              const attachments = event.message?.attachments;
+              let attachmentUrl = null;
+              let attachmentType = null;
+              
+              if (attachments && attachments.length > 0) {
+                const attachment = attachments[0];
+                attachmentUrl = attachment.image_data?.url || attachment.payload?.url;
+                attachmentType = attachment.type;
+                console.log(`📎 Instagram inbound attachment: type=${attachmentType}, url=${attachmentUrl}`);
+              }
+
+              // Fetch attachment URL from API if not in webhook
+              if (!attachmentUrl && mid && igAccount.metaPage?.pageAccessToken) {
+                try {
+                  console.log(`🔄 Fetching Instagram attachment URL from API for inbound message ${mid}...`);
+                  const msgRes = await axios.get(
+                    `https://graph.facebook.com/v19.0/${mid}`,
+                    {
+                      params: {
+                        fields: 'attachments',
+                        access_token: igAccount.metaPage.pageAccessToken,
+                      },
+                    }
+                  );
+                  
+                  const attachmentsData = msgRes.data.attachments?.data || msgRes.data.attachments;
+                  if (attachmentsData && attachmentsData.length > 0) {
+                    attachmentUrl = attachmentsData[0].image_data?.url || attachmentsData[0].payload?.url;
+                    if (attachmentUrl) {
+                      console.log(`📎 Fetched Instagram attachment URL from API: ${attachmentUrl.substring(0, 100)}...`);
+                    }
+                  }
+                } catch (fetchErr: any) {
+                  console.warn(`⚠️ Could not fetch Instagram attachment URL from API: ${fetchErr.message}`);
+                }
+              }
+
               await prisma.igMessage.create({
                 data: {
                   conversationId: conversation.id,
@@ -396,11 +630,16 @@ metaWebhookRouter.post(
                   fromId: senderId,
                   fromUsername: senderUsername,
                   text: text ?? null,
+                  attachmentUrl: attachmentUrl,
+                  attachmentType: attachmentType,
                   direction: "INBOUND",
                   timestamp,
                 },
               });
               console.log(`✅ Instagram message saved to DB: ${text}`);
+              if (attachmentUrl) {
+                console.log(`📎 Attachment URL saved: ${attachmentUrl}`);
+              }
             } else {
               console.log(`⚠️ Instagram message already exists: ${mid}`);
             }

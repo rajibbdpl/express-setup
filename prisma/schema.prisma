@@ -182,17 +182,19 @@ model IgConversation {
 }
 
 model IgMessage {
-  id             String           @id @default(cuid())
-  conversationId String
-  igMessageId    String           @unique
-  fromId         String?
-  fromUsername   String?
-  text           String?
-  attachmentUrl  String?
-  direction      MessageDirection
-  deliveryStatus DeliveryStatus   @default(PENDING)
-  timestamp      DateTime?
-  createdAt      DateTime         @default(now())
+  id              String           @id @default(cuid())
+  conversationId  String
+  igMessageId     String           @unique
+  fromId          String?
+  fromUsername    String?
+  text            String?
+  attachmentUrl   String?
+  attachmentId    String?
+  attachmentType  String?
+  direction       MessageDirection
+  deliveryStatus  DeliveryStatus   @default(PENDING)
+  timestamp       DateTime?
+  createdAt       DateTime         @default(now())
 
   conversation IgConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -260,16 +262,19 @@ model FacebookConversation {
 }
 
 model FacebookMessage {
-  id             String           @id @default(cuid())
-  conversationId String
-  fbMessageId    String           @unique
-  fromId         String?
-  fromName       String?
-  text           String?
-  attachmentUrl  String?
-  direction      MessageDirection
-  createdTime    DateTime?
-  createdAt      DateTime         @default(now())
+  id              String           @id @default(cuid())
+  conversationId  String
+  fbMessageId     String           @unique
+  fromId          String?
+  fromName        String?
+  text            String?
+  attachmentUrl   String?
+  attachmentId    String?
+  attachmentType  String?
+  direction       MessageDirection
+  deliveryStatus  DeliveryStatus   @default(PENDING)
+  createdTime     DateTime?
+  createdAt       DateTime         @default(now())
 
   conversation FacebookConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 

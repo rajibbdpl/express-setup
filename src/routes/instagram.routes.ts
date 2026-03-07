@@ -2,6 +2,8 @@ import { Router, Request, Response } from "express";
 import { prisma } from "@/config/database";
 import axios from "axios";
 import { auth } from "@/lib/auth";
+import { uploadSingleImage } from "@/middleware/upload.middleware";
+import { uploadImageToMeta } from "@/lib/meta-attachment";
 
 const instagramRouter = Router();
 
@@ -214,6 +216,241 @@ instagramRouter.post(
       res.status(500).json({ error: "Failed to send reply" });
     }
   },
+);
+
+instagramRouter.post(
+  "/conversations/:conversationId/send-image",
+  uploadSingleImage,
+  async (req: Request, res: Response) => {
+    try {
+      const session = await auth.api.getSession({ headers: req.headers as any });
+      
+      if (!session?.user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const conversationId = req.params.conversationId as string;
+      
+      if (!req.file) {
+        return res.status(400).json({ error: "Image file is required" });
+      }
+
+      const conversation = await prisma.igConversation.findFirst({
+        where: { 
+          id: conversationId,
+          igAccount: {
+            metaPage: { userId: session.user.id }
+          }
+        },
+        include: {
+          igAccount: {
+            include: { metaPage: true }
+          }
+        },
+      });
+
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+
+      const { attachmentId } = await uploadImageToMeta(
+        conversation.igAccount.metaPage.pageId,
+        conversation.igAccount.metaPage.pageAccessToken,
+        req.file.buffer,
+        req.file.originalname
+      );
+
+      const savedMessage = await prisma.igMessage.create({
+        data: {
+          conversationId: conversation.id,
+          igMessageId: `local_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+          attachmentId,
+          attachmentType: "image",
+          direction: "OUTBOUND",
+          deliveryStatus: "PENDING",
+          timestamp: new Date(),
+        },
+      });
+
+      try {
+        const sendRes = await axios.post(
+          `https://graph.facebook.com/v19.0/${conversation.igAccount.metaPage.pageId}/messages`,
+          {
+            recipient: { id: conversation.participantIgId },
+            message: {
+              attachment: {
+                type: "image",
+                payload: {
+                  attachment_id: attachmentId,
+                },
+              },
+            },
+            access_token: conversation.igAccount.metaPage.pageAccessToken,
+          }
+        );
+
+        // Fetch the message to get attachment URL
+        let attachmentUrl = null;
+        try {
+          const msgRes = await axios.get(
+            `https://graph.facebook.com/v19.0/${sendRes.data.message_id}`,
+            {
+              params: {
+                fields: 'attachments',
+                access_token: conversation.igAccount.metaPage.pageAccessToken,
+              },
+            }
+          );
+          
+          const attachmentsData = msgRes.data.attachments?.data || msgRes.data.attachments;
+          if (attachmentsData && attachmentsData.length > 0) {
+            attachmentUrl = attachmentsData[0].image_data?.url || attachmentsData[0].payload?.url;
+            console.log(`📎 Retrieved Instagram attachment URL: ${attachmentUrl}`);
+          }
+        } catch (fetchErr: any) {
+          console.warn("⚠️ Could not fetch attachment URL:", fetchErr.message);
+        }
+
+        const updateData: any = {
+          deliveryStatus: "SENT",
+          igMessageId: sendRes.data.message_id,
+          attachmentUrl: attachmentUrl,
+        };
+
+        if (sendRes.data.timestamp) {
+          updateData.timestamp = new Date(sendRes.data.timestamp * 1000);
+        }
+
+        await prisma.igMessage.update({
+          where: { id: savedMessage.id },
+          data: updateData,
+        });
+
+        res.json({ 
+          success: true, 
+          messageId: savedMessage.id,
+          deliveryStatus: "SENT",
+          attachmentUrl: attachmentUrl,
+        });
+
+      } catch (sendError: any) {
+        console.error("Failed to send image message:", sendError.response?.data || sendError.message);
+        
+        await prisma.igMessage.update({
+          where: { id: savedMessage.id },
+          data: { deliveryStatus: "FAILED" },
+        });
+
+        res.json({ 
+          success: true,
+          messageId: savedMessage.id,
+          deliveryStatus: "FAILED",
+          error: "Image saved but failed to send"
+        });
+      }
+
+    } catch (err: any) {
+      console.error("Send image error:", err);
+      
+      if (err.message.includes('Invalid file type') || err.message.includes('File too large')) {
+        return res.status(400).json({ error: err.message });
+      }
+      
+      res.status(500).json({ error: "Failed to send image" });
+    }
+  }
+);
+
+instagramRouter.post(
+  "/conversations/:conversationId/retry/:messageId",
+  async (req: Request, res: Response) => {
+    try {
+      const session = await auth.api.getSession({ headers: req.headers as any });
+      
+      if (!session?.user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const conversationId = req.params.conversationId as string;
+      const messageId = req.params.messageId as string;
+
+      const message = await prisma.igMessage.findFirst({
+        where: {
+          id: messageId,
+          conversationId,
+          conversation: {
+            igAccount: {
+              metaPage: { userId: session.user.id }
+            }
+          }
+        },
+        include: {
+          conversation: {
+            include: {
+              igAccount: {
+                include: { metaPage: true }
+              }
+            }
+          }
+        }
+      });
+
+      if (!message) {
+        return res.status(404).json({ error: "Message not found" });
+      }
+
+      if (!message.attachmentId) {
+        return res.status(400).json({ 
+          error: "No attachment found. Please re-upload the image." 
+        });
+      }
+
+      try {
+        const sendRes = await axios.post(
+          `https://graph.facebook.com/v19.0/${message.conversation.igAccount.metaPage.pageId}/messages`,
+          {
+            recipient: { id: message.conversation.participantIgId },
+            message: {
+              attachment: {
+                type: message.attachmentType || "image",
+                payload: {
+                  attachment_id: message.attachmentId,
+                },
+              },
+            },
+            access_token: message.conversation.igAccount.metaPage.pageAccessToken,
+          }
+        );
+
+        const updateData: any = {
+          deliveryStatus: "SENT",
+          igMessageId: sendRes.data.message_id,
+        };
+
+        if (sendRes.data.timestamp) {
+          updateData.timestamp = new Date(sendRes.data.timestamp * 1000);
+        }
+
+        await prisma.igMessage.update({
+          where: { id: message.id },
+          data: updateData,
+        });
+
+        res.json({ success: true, deliveryStatus: "SENT" });
+
+      } catch (sendError: any) {
+        console.error("Retry failed:", sendError.response?.data || sendError.message);
+        
+        res.status(500).json({ 
+          error: "Retry failed. The attachment may have expired. Please re-upload the image." 
+        });
+      }
+
+    } catch (err: any) {
+      console.error("Retry error:", err);
+      res.status(500).json({ error: "Failed to retry message" });
+    }
+  }
 );
 
 export default instagramRouter;
