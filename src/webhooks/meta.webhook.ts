@@ -170,7 +170,15 @@ metaWebhookRouter.post(
                     createdTime: timestamp,
                   },
                 });
-                console.log(`✅ Facebook echo message saved to DB: ${text}`);
+                
+                if (attachmentType === "audio") {
+                  console.log(`✅ Facebook echo voice message saved to DB (audio attachment)`);
+                } else if (text) {
+                  console.log(`✅ Facebook echo message saved to DB: ${text}`);
+                } else {
+                  console.log(`✅ Facebook echo message saved to DB (no text)`);
+                }
+                
                 if (attachmentUrl) {
                   console.log(`📎 Attachment URL saved: ${attachmentUrl.substring(0, 100)}...`);
                 }
@@ -310,7 +318,15 @@ metaWebhookRouter.post(
                   createdTime: timestamp,
                 },
               });
-              console.log(`✅ Facebook message saved to DB: ${text}`);
+              
+              if (attachmentType === "audio") {
+                console.log(`✅ Facebook voice message saved to DB (audio attachment)`);
+              } else if (text) {
+                console.log(`✅ Facebook message saved to DB: ${text}`);
+              } else {
+                console.log(`✅ Facebook message saved to DB (no text)`);
+              }
+              
               if (attachmentUrl) {
                 console.log(`📎 Attachment URL saved: ${attachmentUrl}`);
               }
