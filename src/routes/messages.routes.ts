@@ -12,7 +12,7 @@ messagesRouter.get("/conversations", async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Not authenticated" });
     }
 
-    const [fbPages, igAccounts] = await Promise.all([
+    const [fbPages, igAccounts, tiktokAccounts] = await Promise.all([
       prisma.metaPage.findMany({
         where: { userId: session.user.id },
       }),
@@ -21,9 +21,12 @@ messagesRouter.get("/conversations", async (req: Request, res: Response) => {
           metaPage: { userId: session.user.id }
         },
       }),
+      prisma.tikTokAccount.findMany({
+        where: { userId: session.user.id },
+      }),
     ]);
 
-    const [fbConversations, igConversations] = await Promise.all([
+    const [fbConversations, igConversations, tiktokConversations] = await Promise.all([
       fbPages.length > 0 
         ? prisma.facebookConversation.findMany({
             where: { 
@@ -42,6 +45,20 @@ messagesRouter.get("/conversations", async (req: Request, res: Response) => {
         ? prisma.igConversation.findMany({
             where: { 
               igAccountId: { in: igAccounts.map(a => a.id) }
+            },
+            orderBy: { updatedAt: "desc" },
+            include: {
+              messages: {
+                orderBy: { timestamp: "desc" },
+                take: 1,
+              },
+            },
+          })
+        : Promise.resolve([]),
+      tiktokAccounts.length > 0
+        ? prisma.tikTokConversation.findMany({
+            where: { 
+              tiktokAccountId: { in: tiktokAccounts.map(a => a.id) }
             },
             orderBy: { updatedAt: "desc" },
             include: {
@@ -72,6 +89,15 @@ messagesRouter.get("/conversations", async (req: Request, res: Response) => {
         snippet: conv.messages[0]?.text || "",
         updatedAt: conv.updatedAt,
         accountId: conv.igAccountId,
+      })),
+      ...tiktokConversations.map(conv => ({
+        id: conv.id,
+        platform: "TIKTOK" as const,
+        participantId: conv.participantOpenId,
+        participantName: conv.participantUsername || conv.participantOpenId,
+        snippet: conv.messages[0]?.text || "",
+        updatedAt: conv.updatedAt,
+        accountId: conv.tiktokAccountId,
       })),
     ].sort((a, b) => {
       const bTime = b.updatedAt?.getTime() || 0;

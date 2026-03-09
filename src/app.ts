@@ -9,6 +9,7 @@ import { errorMiddleware } from "./middlewares/error.middleware";
 import oauthRouter from "./routes/oauth.routes";
 import tiktokRouter from "./routes/tiktok.routes";
 import metaWebHookRouter from "./webhooks/meta.webhook";
+import tiktokWebhookRouter from "./webhooks/tiktok.webhooks";
 import accountsRouter from "./routes/accounts";
 import facebookRouter from "./routes/facebook.routes";
 import instagramRouter from "./routes/instagram.routes";
@@ -31,6 +32,7 @@ app.use(
 );
 
 app.use("/webhook", metaWebHookRouter);
+app.use("/api/tiktok", tiktokWebhookRouter);
 
 //for every req, if body contains JSON, convert it into a js object and add to req.body
 app.use(express.json({ limit: "10kb" }));
@@ -60,8 +62,8 @@ app.use(
 
 app.use("/api/auth", toNodeHandler(auth));
 
-app.use("/oauth", oauthRouter);
-app.use("/api/tiktok", tiktokRouter);
+app.use("/auth", oauthRouter);
+app.use("/api/v1/tiktok", tiktokRouter);
 app.use("/api/v1/accounts", accountsRouter);
 app.use("/api/v1/facebook", facebookRouter);
 app.use("/api/v1/instagram", instagramRouter);

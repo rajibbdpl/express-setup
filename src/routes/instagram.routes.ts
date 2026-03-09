@@ -157,10 +157,10 @@ instagramRouter.post(
 
       console.log(`💾 Instagram message saved to DB (ID: ${savedMessage.id})`);
 
-      // ✅ STEP 2: Try to send via Instagram API (using Page ID, not IG Account ID)
+      // ✅ STEP 2: Try to send via Instagram API (using IG Account ID)
       try {
         const sendRes = await axios.post(
-          `https://graph.facebook.com/v19.0/${conversation.igAccount.metaPage.pageId}/messages`,
+          `https://graph.facebook.com/v19.0/${conversation.igAccount.igAccountId}/messages`,
           {
             recipient: { id: conversation.participantIgId },
             message: { text },
@@ -260,6 +260,9 @@ instagramRouter.post(
         req.file.originalname
       );
 
+      console.log(`📸 Uploading Instagram image - Page ID: ${conversation.igAccount.metaPage.pageId}, IG Account ID: ${conversation.igAccount.igAccountId}`);
+      console.log(`📸 Attachment ID: ${attachmentId}`);
+
       const savedMessage = await prisma.igMessage.create({
         data: {
           conversationId: conversation.id,
@@ -273,6 +276,8 @@ instagramRouter.post(
       });
 
       try {
+        console.log(`📸 Sending Instagram image via Page ID: ${conversation.igAccount.metaPage.pageId}`);
+        
         const sendRes = await axios.post(
           `https://graph.facebook.com/v19.0/${conversation.igAccount.metaPage.pageId}/messages`,
           {
@@ -326,6 +331,9 @@ instagramRouter.post(
           data: updateData,
         });
 
+        console.log(`✅ Instagram image sent successfully via Page ID: ${conversation.igAccount.metaPage.pageId}`);
+        console.log(`✅ Message ID: ${sendRes.data.message_id}, Attachment URL: ${attachmentUrl?.substring(0, 50)}...`);
+
         res.json({ 
           success: true, 
           messageId: savedMessage.id,
@@ -334,7 +342,13 @@ instagramRouter.post(
         });
 
       } catch (sendError: any) {
-        console.error("Failed to send image message:", sendError.response?.data || sendError.message);
+        console.error("📸 Failed to send Instagram image message:", {
+          error: sendError.response?.data,
+          pageId: conversation.igAccount.metaPage.pageId,
+          igAccountId: conversation.igAccount.igAccountId,
+          participantIgId: conversation.participantIgId,
+          attachmentId: attachmentId
+        });
         
         await prisma.igMessage.update({
           where: { id: savedMessage.id },
@@ -406,6 +420,9 @@ instagramRouter.post(
       }
 
       try {
+        console.log(`📸 Retrying Instagram image - Page ID: ${message.conversation.igAccount.metaPage.pageId}, IG Account ID: ${message.conversation.igAccount.igAccountId}`);
+        console.log(`📸 Attachment ID: ${message.attachmentId}`);
+        
         const sendRes = await axios.post(
           `https://graph.facebook.com/v19.0/${message.conversation.igAccount.metaPage.pageId}/messages`,
           {
@@ -439,7 +456,13 @@ instagramRouter.post(
         res.json({ success: true, deliveryStatus: "SENT" });
 
       } catch (sendError: any) {
-        console.error("Retry failed:", sendError.response?.data || sendError.message);
+        console.error("📸 Instagram image retry failed:", {
+          error: sendError.response?.data,
+          pageId: message.conversation.igAccount.metaPage.pageId,
+          igAccountId: message.conversation.igAccount.igAccountId,
+          participantIgId: message.conversation.participantIgId,
+          attachmentId: message.attachmentId
+        });
         
         res.status(500).json({ 
           error: "Retry failed. The attachment may have expired. Please re-upload the image." 

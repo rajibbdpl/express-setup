@@ -15,7 +15,7 @@ accountsRouter.get("/connected", async (req: Request, res: Response) => {
 
     const userId = session.user.id;
 
-    const [metaPages, whatsappAccounts] = await Promise.all([
+    const [metaPages, whatsappAccounts, tiktokAccounts] = await Promise.all([
       prisma.metaPage.findMany({
         where: { userId },
         include: {
@@ -25,17 +25,14 @@ accountsRouter.get("/connected", async (req: Request, res: Response) => {
       prisma.whatsAppAccount.findMany({
         where: { userId },
       }),
+      prisma.tikTokAccount.findMany({
+        where: { userId },
+      }),
     ]);
 
     console.log("Meta pages found:", metaPages.length);
     console.log("Instagram accounts found:", metaPages.filter(p => p.instagramAccount).length);
-
-    const tiktokAccount = await prisma.account.findFirst({
-      where: { 
-        userId,
-        providerId: "tiktok",
-      },
-    });
+    console.log("TikTok accounts found:", tiktokAccounts.length);
 
     const connectedAccounts = {
       facebook: metaPages.map((page) => ({
@@ -61,10 +58,13 @@ accountsRouter.get("/connected", async (req: Request, res: Response) => {
         phoneNumber: wa.phoneNumber,
         displayName: wa.displayName,
       })),
-      tiktok: tiktokAccount
+      tiktok: tiktokAccounts.length > 0
         ? {
-            id: tiktokAccount.id,
-            accountId: tiktokAccount.accountId,
+            id: tiktokAccounts[0].id,
+            openId: tiktokAccounts[0].openId,
+            username: tiktokAccounts[0].username,
+            displayName: tiktokAccounts[0].displayName,
+            profileImageUrl: tiktokAccounts[0].profileImageUrl,
           }
         : null,
     };

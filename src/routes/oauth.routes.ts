@@ -18,7 +18,7 @@ oauthRouter.get("/tiktok", async (req, res) => {
 
   const params = new URLSearchParams({
     client_key: process.env.TIKTOK_CLIENT_KEY!,
-    scope: "user.info.basic,video.list,video.upload",
+    scope: "user.info.basic,user.info.profile,video.list,video.upload",
     response_type: "code",
     redirect_uri: process.env.TIKTOK_REDIRECT_URI!,
     state: session.user.id,
@@ -87,6 +87,37 @@ oauthRouter.get("/tiktok/callback", async (req, res) => {
     });
 
     console.log("TikTok tokens saved for user:", userId);
+
+    try {
+      const profileRes = await axios.get("https://open.tiktokapis.com/v2/user/info/", {
+        params: { fields: "open_id,union_id,avatar_url,display_name,username" },
+        headers: { Authorization: `Bearer ${access_token}` },
+      });
+
+      const userData = profileRes.data?.data?.user;
+      
+      if (userData) {
+        await prisma.tikTokAccount.upsert({
+          where: { openId: open_id },
+          create: {
+            userId: userId,
+            openId: open_id,
+            username: userData.username,
+            displayName: userData.display_name,
+            profileImageUrl: userData.avatar_url,
+          },
+          update: {
+            username: userData.username,
+            displayName: userData.display_name,
+            profileImageUrl: userData.avatar_url,
+          },
+        });
+        console.log(`✅ TikTok profile saved: @${userData.username} (${userData.display_name})`);
+      }
+    } catch (profileErr: any) {
+      console.warn("⚠️ Could not fetch TikTok profile:", profileErr.response?.data || profileErr.message);
+    }
+
     return res.redirect(`${process.env.ALLOWED_ORIGINS}/dashboard?tiktok=connected`);
   } catch (err: any) {
     console.error(err.response?.data || err.message);
@@ -124,6 +155,10 @@ oauthRouter.post("/tiktok/disconnect", async (req, res) => {
   if (!session?.user) {
     return res.status(401).json({ error: "Not logged in" });
   }
+
+  await prisma.tikTokAccount.deleteMany({
+    where: { userId: session.user.id },
+  });
 
   await prisma.account.deleteMany({
     where: { userId: session.user.id, providerId: "tiktok" },
