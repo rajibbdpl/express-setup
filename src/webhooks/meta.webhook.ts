@@ -5,15 +5,22 @@ import axios from "axios";
 
 const metaWebhookRouter = Router();
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN!;
+const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
 
 metaWebhookRouter.get("/meta", (req: Request, res: Response) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+  // Accept both META_VERIFY_TOKEN (for Facebook/Instagram) and WHATSAPP_VERIFY_TOKEN (for WhatsApp)
+  const validTokens = [VERIFY_TOKEN, WHATSAPP_VERIFY_TOKEN].filter(Boolean);
+  
+  if (mode === "subscribe" && validTokens.includes(token as string)) {
+    console.log(`✅ Webhook verified with token for: ${token === VERIFY_TOKEN ? 'Meta (Facebook/Instagram)' : 'WhatsApp'}`);
     return res.status(200).send(challenge);
   }
+  
+  console.log(`❌ Webhook verification failed. Received token: ${token}`);
   return res.sendStatus(403);
 });
 
@@ -358,7 +365,10 @@ metaWebhookRouter.post(
             const igAccountId = event.recipient.id;
             const text = event.message?.text;
             const mid = event.message?.mid;
-            const timestamp = new Date(event.timestamp * 1000);
+            // Handle timestamp safely - fallback to current time if invalid
+            const timestamp = event.timestamp && event.timestamp > 0
+              ? new Date(event.timestamp * 1000)
+              : new Date();
             const isEcho = event.message?.is_echo;
             const attachments = event.message?.attachments;
 
@@ -658,6 +668,186 @@ metaWebhookRouter.post(
               }
             } else {
               console.log(`⚠️ Instagram message already exists: ${mid}`);
+            }
+          }
+        }
+      }
+
+      // ===================== WHATSAPP WEBHOOK HANDLING =====================
+      if (body.object === "whatsapp_business_account") {
+        console.log("📱 WHATSAPP WEBHOOK DETECTED");
+        
+        for (const entry of body.entry ?? []) {
+          for (const change of entry.changes ?? []) {
+            const value = change.value;
+            
+            // Handle incoming messages
+            if (value?.messages && value.messages.length > 0) {
+              for (const message of value.messages) {
+                const from = message.from; // sender's phone number
+                const messageId = message.id;
+                const timestamp = message.timestamp ? new Date(parseInt(message.timestamp) * 1000) : new Date();
+                const contactName = value.contacts?.[0]?.profile?.name || "Unknown";
+                
+                console.log(`📱 New WhatsApp message from ${contactName} (${from})`);
+                
+                let text = null;
+                let attachmentUrl = null;
+                let attachmentType = null;
+                let mediaId = null;
+                
+                // Handle different message types
+                if (message.type === "text") {
+                  text = message.text?.body;
+                  console.log(`💬 Text: ${text}`);
+                } else if (message.type === "image") {
+                  text = message.image?.caption || null;
+                  mediaId = message.image?.id;
+                  attachmentType = "image";
+                  console.log(`🖼️ Image received, ID: ${mediaId}`);
+                } else if (message.type === "audio" || message.type === "voice") {
+                  mediaId = message.audio?.id || message.voice?.id;
+                  attachmentType = "audio";
+                  console.log(`🎵 Audio received, ID: ${mediaId}`);
+                } else if (message.type === "video") {
+                  text = message.video?.caption || null;
+                  mediaId = message.video?.id;
+                  attachmentType = "video";
+                  console.log(`🎬 Video received, ID: ${mediaId}`);
+                } else if (message.type === "document") {
+                  text = message.document?.caption || null;
+                  mediaId = message.document?.id;
+                  attachmentType = "document";
+                  console.log(`📄 Document received, ID: ${mediaId}`);
+                }
+                
+                // Fetch media URL from WhatsApp API if mediaId is present
+                if (mediaId && !attachmentUrl) {
+                  try {
+                    // First find any WhatsApp account to get the access token
+                    const anyWaAccount = await prisma.whatsAppAccount.findFirst();
+                    
+                    if (anyWaAccount?.systemUserToken) {
+                      console.log(`🔄 Fetching WhatsApp media URL for ID: ${mediaId}`);
+                      
+                      const mediaRes = await axios.get(
+                        `https://graph.facebook.com/v19.0/${mediaId}`,
+                        {
+                          headers: {
+                            Authorization: `Bearer ${anyWaAccount.systemUserToken}`,
+                          },
+                        }
+                      );
+                      
+                      attachmentUrl = mediaRes.data.url;
+                      console.log(`📎 WhatsApp media URL fetched: ${attachmentUrl?.substring(0, 100)}...`);
+                    } else {
+                      console.warn(`⚠️ No WhatsApp account with token found to fetch media URL`);
+                    }
+                  } catch (mediaErr: any) {
+                    console.error(`❌ Failed to fetch WhatsApp media URL: ${mediaErr.response?.data || mediaErr.message}`);
+                  }
+                }
+                
+                // Find WhatsApp account by phone number ID
+                const phoneNumberId = change.value.metadata?.phone_number_id;
+                let waAccount = await prisma.whatsAppAccount.findFirst({
+                  where: { phoneNumberId },
+                });
+                
+                if (!waAccount) {
+                  console.log(`⚠️ WhatsApp account not found for phone ID: ${phoneNumberId}, trying first account...`);
+                  waAccount = await prisma.whatsAppAccount.findFirst();
+                }
+                
+                if (!waAccount) {
+                  console.error("❌ No WhatsApp account found in database");
+                  continue;
+                }
+                
+                // Get or create conversation (using findFirst since there's no unique constraint on the compound)
+                let conversation = await prisma.waConversation.findFirst({
+                  where: {
+                    waAccountId: waAccount.id,
+                    contactPhone: from,
+                  },
+                });
+                
+                if (!conversation) {
+                  conversation = await prisma.waConversation.create({
+                    data: {
+                      waAccountId: waAccount.id,
+                      contactPhone: from,
+                      contactName,
+                      lastMessageAt: timestamp,
+                    },
+                  });
+                  console.log(`✅ Created new WhatsApp conversation with ${from}`);
+                } else {
+                  // Update conversation
+                  await prisma.waConversation.update({
+                    where: { id: conversation.id },
+                    data: {
+                      contactName,
+                      lastMessageAt: timestamp,
+                    },
+                  });
+                }
+                
+                // Check for duplicate message
+                const existingMessage = await prisma.waMessage.findUnique({
+                  where: { waMessageId: messageId },
+                });
+                
+                if (!existingMessage) {
+                  // Map attachment type to WaMessageType enum
+                  const messageType = (() => {
+                    switch (attachmentType?.toUpperCase()) {
+                      case "IMAGE": return "IMAGE";
+                      case "VIDEO": return "VIDEO";
+                      case "AUDIO": return "AUDIO";
+                      case "DOCUMENT": return "DOCUMENT";
+                      case "VOICE": return "AUDIO";
+                      default: return "TEXT";
+                    }
+                  })();
+                  
+                  // Save message to database
+                  await prisma.waMessage.create({
+                    data: {
+                      conversationId: conversation.id,
+                      waMessageId: messageId,
+                      direction: "INBOUND",
+                      type: messageType,
+                      text,
+                      mediaUrl: attachmentUrl,
+                      mediaType: attachmentType,
+                      status: "SENT",
+                      timestamp,
+                    },
+                  });
+                  console.log(`✅ WhatsApp message saved to DB: ${text || `[${attachmentType}]`}`);
+                } else {
+                  console.log(`⚠️ WhatsApp message already exists: ${messageId}`);
+                }
+              }
+            }
+            
+            // Handle message status updates
+            if (value?.statuses && value.statuses.length > 0) {
+              for (const status of value.statuses) {
+                const messageId = status.id;
+                const statusValue = status.status; // sent, delivered, read, failed
+                const timestamp = status.timestamp ? new Date(parseInt(status.timestamp) * 1000) : new Date();
+                
+                console.log(`📊 WhatsApp message ${messageId} status: ${statusValue}`);
+                
+                // Update message status in database
+                await prisma.waMessage.updateMany({
+                  where: { waMessageId: messageId },
+                  data: { status: statusValue.toUpperCase() },
+                });
+              }
             }
           }
         }

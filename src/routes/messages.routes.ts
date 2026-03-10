@@ -12,7 +12,7 @@ messagesRouter.get("/conversations", async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Not authenticated" });
     }
 
-    const [fbPages, igAccounts, tiktokAccounts] = await Promise.all([
+    const [fbPages, igAccounts, tiktokAccounts, whatsappAccounts] = await Promise.all([
       prisma.metaPage.findMany({
         where: { userId: session.user.id },
       }),
@@ -24,9 +24,12 @@ messagesRouter.get("/conversations", async (req: Request, res: Response) => {
       prisma.tikTokAccount.findMany({
         where: { userId: session.user.id },
       }),
+      prisma.whatsAppAccount.findMany({
+        where: { userId: session.user.id },
+      }),
     ]);
 
-    const [fbConversations, igConversations, tiktokConversations] = await Promise.all([
+    const [fbConversations, igConversations, tiktokConversations, whatsappConversations] = await Promise.all([
       fbPages.length > 0 
         ? prisma.facebookConversation.findMany({
             where: { 
@@ -69,6 +72,20 @@ messagesRouter.get("/conversations", async (req: Request, res: Response) => {
             },
           })
         : Promise.resolve([]),
+      whatsappAccounts.length > 0
+        ? prisma.waConversation.findMany({
+            where: { 
+              waAccountId: { in: whatsappAccounts.map(a => a.id) }
+            },
+            orderBy: { lastMessageAt: "desc" },
+            include: {
+              messages: {
+                orderBy: { timestamp: "desc" },
+                take: 1,
+              },
+            },
+          })
+        : Promise.resolve([]),
     ]);
 
     const unifiedConversations = [
@@ -98,6 +115,15 @@ messagesRouter.get("/conversations", async (req: Request, res: Response) => {
         snippet: conv.messages[0]?.text || "",
         updatedAt: conv.updatedAt,
         accountId: conv.tiktokAccountId,
+      })),
+      ...whatsappConversations.map(conv => ({
+        id: conv.id,
+        platform: "WHATSAPP" as const,
+        participantId: conv.contactPhone,
+        participantName: conv.contactName || conv.contactPhone,
+        snippet: conv.messages[0]?.text || "",
+        updatedAt: conv.lastMessageAt,
+        accountId: conv.waAccountId,
       })),
     ].sort((a, b) => {
       const bTime = b.updatedAt?.getTime() || 0;

@@ -15,6 +15,7 @@ import facebookRouter from "./routes/facebook.routes";
 import instagramRouter from "./routes/instagram.routes";
 import messagesRouter from "./routes/messages.routes";
 import webhookDiagnosticsRouter from "./routes/webhook-diagnostics.routes";
+import whatsappRouter from "./routes/whatsapp.routes";
 import { auth } from "./lib/auth";
 import { toNodeHandler } from "better-auth/node";
 
@@ -62,13 +63,14 @@ app.use(
 
 app.use("/api/auth", toNodeHandler(auth));
 
-app.use("/auth", oauthRouter);
+app.use("/oauth", oauthRouter);
 app.use("/api/v1/tiktok", tiktokRouter);
 app.use("/api/v1/accounts", accountsRouter);
 app.use("/api/v1/facebook", facebookRouter);
 app.use("/api/v1/instagram", instagramRouter);
 app.use("/api/v1/messages", messagesRouter);
 app.use("/api/v1/webhooks", webhookDiagnosticsRouter);
+app.use("/api/v1/whatsapp", whatsappRouter);
 
 //global error handler (must be last)
 app.use(errorMiddleware);

@@ -157,10 +157,10 @@ instagramRouter.post(
 
       console.log(`💾 Instagram message saved to DB (ID: ${savedMessage.id})`);
 
-      // ✅ STEP 2: Try to send via Instagram API (using IG Account ID)
+      // ✅ STEP 2: Try to send via Instagram API (using Page ID, not IG Account ID)
       try {
         const sendRes = await axios.post(
-          `https://graph.facebook.com/v19.0/${conversation.igAccount.igAccountId}/messages`,
+          `https://graph.facebook.com/v19.0/${conversation.igAccount.metaPage.pageId}/messages`,
           {
             recipient: { id: conversation.participantIgId },
             message: { text },

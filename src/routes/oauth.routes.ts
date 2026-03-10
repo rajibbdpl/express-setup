@@ -184,6 +184,8 @@ oauthRouter.get("/meta", async (req: Request, res: Response) => {
     "instagram_manage_messages",
     "instagram_manage_comments",
     "business_management",
+    "whatsapp_business_management",
+    "whatsapp_business_messaging",
   ].join(",");
 
   const params = new URLSearchParams({
@@ -364,6 +366,91 @@ oauthRouter.get("/meta/callback", async (req, res) => {
       }
 
       await subscribePageToWebHook(page.id, page.access_token);
+    }
+
+    // Fetch WhatsApp Business Accounts from Business Manager
+    try {
+      console.log("🔄 Fetching WhatsApp Business Accounts...");
+      
+      // Get user's businesses
+      const businessesRes = await axios.get(
+        `https://graph.facebook.com/v19.0/me/businesses`,
+        {
+          params: {
+            access_token: longLivedToken,
+            fields: "id,name",
+          },
+        }
+      );
+      
+      const businesses = businessesRes.data.data || [];
+      console.log(`Found ${businesses.length} businesses`);
+      
+      for (const business of businesses) {
+        try {
+          // Get WhatsApp Business Accounts for this business
+          const wabaRes = await axios.get(
+            `https://graph.facebook.com/v19.0/${business.id}/owned_whatsapp_business_accounts`,
+            {
+              params: {
+                access_token: longLivedToken,
+                fields: "id,name,timezone_id",
+              },
+            }
+          );
+          
+          const wabas = wabaRes.data.data || [];
+          console.log(`Found ${wabas.length} WhatsApp Business Accounts in ${business.name}`);
+          
+          for (const waba of wabas) {
+            try {
+              // Get phone numbers for this WABA
+              const phonesRes = await axios.get(
+                `https://graph.facebook.com/v19.0/${waba.id}/phone_numbers`,
+                {
+                  params: {
+                    access_token: longLivedToken,
+                    fields: "id,display_phone_number,verified_name,quality_rating",
+                  },
+                }
+              );
+              
+              const phones = phonesRes.data.data || [];
+              console.log(`Found ${phones.length} phone numbers in WABA ${waba.name || waba.id}`);
+              
+              for (const phone of phones) {
+                await prisma.whatsAppAccount.upsert({
+                  where: { phoneNumberId: phone.id },
+                  create: {
+                    userId: userId,
+                    phoneNumberId: phone.id,
+                    businessAccountId: waba.id,
+                    phoneNumber: phone.display_phone_number,
+                    displayName: phone.verified_name || waba.name,
+                    systemUserToken: longLivedToken, // Using user token - ideally should use system user token
+                  },
+                  update: {
+                    businessAccountId: waba.id,
+                    phoneNumber: phone.display_phone_number,
+                    displayName: phone.verified_name || waba.name,
+                    systemUserToken: longLivedToken,
+                  },
+                });
+                console.log(`✅ WhatsApp account saved: ${phone.verified_name} (${phone.display_phone_number})`);
+              }
+            } catch (phoneErr: any) {
+              console.warn(`⚠️ Could not fetch phone numbers for WABA ${waba.id}:`,
+                phoneErr.response?.data?.error?.message || phoneErr.message);
+            }
+          }
+        } catch (wabaErr: any) {
+          console.warn(`⚠️ Could not fetch WABAs for business ${business.name}:`,
+            wabaErr.response?.data?.error?.message || wabaErr.message);
+        }
+      }
+    } catch (waErr: any) {
+      console.warn("⚠️ Could not fetch WhatsApp Business Accounts:",
+        waErr.response?.data?.error?.message || waErr.message);
     }
 
     try {
