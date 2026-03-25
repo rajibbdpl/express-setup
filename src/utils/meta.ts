@@ -170,3 +170,54 @@ export const subscribeAppToFacebookPageWebhook = async () => {
     throw err;
   }
 };
+
+export const subscribeAppToWhatsAppWebhook = async () => {
+  try {
+    const META_APP_ID = process.env.META_APP_ID;
+    const META_APP_SECRET = process.env.META_APP_SECRET;
+    const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
+    const WEBHOOK_URL = process.env.NGROK_LINK || process.env.ALLOWED_ORIGINS;
+
+    if (!META_APP_ID || !META_APP_SECRET || !VERIFY_TOKEN || !WEBHOOK_URL) {
+      throw new Error("Missing required environment variables for WhatsApp webhook subscription");
+    }
+
+    console.log("🔄 Getting Facebook App access token for WhatsApp webhooks...");
+    const tokenRes = await axios.get(
+      `https://graph.facebook.com/v19.0/oauth/access_token`,
+      {
+        params: {
+          client_id: META_APP_ID,
+          client_secret: META_APP_SECRET,
+          grant_type: 'client_credentials',
+        },
+      }
+    );
+    const appAccessToken = tokenRes.data.access_token;
+    console.log("✅ App access token obtained");
+
+    console.log("🔄 Subscribing app to WhatsApp Business webhooks...");
+    console.log(`📍 Callback URL: ${WEBHOOK_URL}/webhook/meta`);
+    
+    const subscribeRes = await axios.post(
+      `https://graph.facebook.com/v19.0/${META_APP_ID}/subscriptions`,
+      {
+        object: 'whatsapp_business_account',
+        callback_url: `${WEBHOOK_URL}/webhook/meta`,
+        verify_token: VERIFY_TOKEN,
+        fields: 'messages,messaging_postbacks',
+      },
+      {
+        params: { access_token: appAccessToken },
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+    console.log('✅ WhatsApp webhook subscribed successfully:', subscribeRes.data);
+    return subscribeRes.data;
+  } catch (err: any) {
+    console.error('❌ WhatsApp webhook subscription failed:', 
+      err.response?.data || err.message);
+    throw err;
+  }
+};
