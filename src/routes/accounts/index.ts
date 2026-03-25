@@ -170,4 +170,155 @@ accountsRouter.post("/sync-instagram", async (req: Request, res: Response) => {
   }
 });
 
+// ============================================
+// DISCONNECT ENDPOINTS
+// ============================================
+
+// Disconnect Facebook - Deletes all MetaPages for the user
+accountsRouter.delete("/facebook", async (req: Request, res: Response) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    
+    if (!session?.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const userId = session.user.id;
+
+    // Delete all MetaPages for this user (cascade will delete InstagramAccounts, conversations, etc.)
+    const result = await prisma.metaPage.deleteMany({
+      where: { userId },
+    });
+
+    // Also clear the user's Meta access token
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        metaAccessToken: null,
+        metaUserId: null,
+        metaTokenExpiry: null,
+      },
+    });
+
+    res.json({
+      status: "success",
+      data: { deletedCount: result.count },
+      errors: null,
+    });
+  } catch (error) {
+    console.error("Error disconnecting Facebook:", error);
+    res.status(500).json({
+      status: "error",
+      data: null,
+      errors: [{ code: "INTERNAL_ERROR", message: "Failed to disconnect Facebook" }],
+    });
+  }
+});
+
+// Disconnect Instagram - Deletes all InstagramAccounts for the user (keeps MetaPages)
+accountsRouter.delete("/instagram", async (req: Request, res: Response) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    
+    if (!session?.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const userId = session.user.id;
+
+    // Get all MetaPage IDs for this user
+    const metaPages = await prisma.metaPage.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+
+    const metaPageIds = metaPages.map(p => p.id);
+
+    // Delete all InstagramAccounts linked to user's MetaPages
+    const result = await prisma.instagramAccount.deleteMany({
+      where: { metaPageId: { in: metaPageIds } },
+    });
+
+    res.json({
+      status: "success",
+      data: { deletedCount: result.count },
+      errors: null,
+    });
+  } catch (error) {
+    console.error("Error disconnecting Instagram:", error);
+    res.status(500).json({
+      status: "error",
+      data: null,
+      errors: [{ code: "INTERNAL_ERROR", message: "Failed to disconnect Instagram" }],
+    });
+  }
+});
+
+// Disconnect WhatsApp - Deletes all WhatsAppAccounts for the user
+accountsRouter.delete("/whatsapp", async (req: Request, res: Response) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    
+    if (!session?.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const userId = session.user.id;
+
+    // Delete all WhatsAppAccounts for this user (cascade will delete conversations, messages)
+    const result = await prisma.whatsAppAccount.deleteMany({
+      where: { userId },
+    });
+
+    res.json({
+      status: "success",
+      data: { deletedCount: result.count },
+      errors: null,
+    });
+  } catch (error) {
+    console.error("Error disconnecting WhatsApp:", error);
+    res.status(500).json({
+      status: "error",
+      data: null,
+      errors: [{ code: "INTERNAL_ERROR", message: "Failed to disconnect WhatsApp" }],
+    });
+  }
+});
+
+// Disconnect TikTok - Deletes TikTokAccount for the user
+accountsRouter.delete("/tiktok", async (req: Request, res: Response) => {
+  try {
+    const session = await auth.api.getSession({ headers: req.headers as any });
+    
+    if (!session?.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const userId = session.user.id;
+
+    // Delete TikTokAccount (cascade will delete conversations, messages)
+    const result = await prisma.tikTokAccount.deleteMany({
+      where: { userId },
+    });
+
+    // Also delete the Account record with OAuth tokens
+    await prisma.account.deleteMany({
+      where: { userId, providerId: "tiktok" },
+    });
+
+    res.json({
+      status: "success",
+      data: { deletedCount: result.count },
+      errors: null,
+    });
+  } catch (error) {
+    console.error("Error disconnecting TikTok:", error);
+    res.status(500).json({
+      status: "error",
+      data: null,
+      errors: [{ code: "INTERNAL_ERROR", message: "Failed to disconnect TikTok" }],
+    });
+  }
+});
+
 export default accountsRouter;

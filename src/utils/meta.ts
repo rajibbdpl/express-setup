@@ -205,7 +205,8 @@ export const subscribeAppToWhatsAppWebhook = async () => {
         object: 'whatsapp_business_account',
         callback_url: `${WEBHOOK_URL}/webhook/meta`,
         verify_token: VERIFY_TOKEN,
-        fields: 'messages,messaging_postbacks',
+        // Only subscribe to messages field - message_status may require additional permissions
+        fields: 'messages',
       },
       {
         params: { access_token: appAccessToken },
@@ -216,8 +217,61 @@ export const subscribeAppToWhatsAppWebhook = async () => {
     console.log('✅ WhatsApp webhook subscribed successfully:', subscribeRes.data);
     return subscribeRes.data;
   } catch (err: any) {
+    const errorData = err.response?.data?.error;
+    
+    // Check for specific permission-related errors
+    if (errorData?.error_subcode === 1929002) {
+      // Permission error - some fields couldn't be subscribed
+      console.warn('⚠️ WhatsApp webhook: Some fields require additional app permissions');
+      console.warn('⚠️ WABA-level subscriptions will be used for webhook delivery');
+      console.warn('ℹ️ To fix: Submit your app for App Review to get whatsapp_business_management permission');
+      // Don't throw - this is expected for apps without advanced permissions
+      return { success: false, reason: 'permission_error', message: errorData?.error_user_msg };
+    }
+    
+    if (errorData?.code === 1 && errorData?.message?.includes('already subscribed')) {
+      // Already subscribed - this is fine
+      console.log('✅ App already subscribed to WhatsApp webhooks');
+      return { success: true, alreadySubscribed: true };
+    }
+    
     console.error('❌ WhatsApp webhook subscription failed:', 
       err.response?.data || err.message);
     throw err;
+  }
+};
+
+/**
+ * Subscribe a specific WhatsApp Business Account (WABA) to webhooks
+ * This is required for each WABA to receive webhook events
+ * @param wabaId - The WhatsApp Business Account ID
+ * @param accessToken - The access token with appropriate permissions
+ */
+export const subscribeWabaToWebhook = async (
+  wabaId: string, 
+  accessToken: string
+): Promise<any> => {
+  try {
+    console.log(`🔄 Subscribing WABA ${wabaId} to webhooks...`);
+    
+    const res = await axios.post(
+      `https://graph.facebook.com/v19.0/${wabaId}/subscribed_apps`,
+      {},
+      {
+        params: {
+          access_token: accessToken,
+        },
+      }
+    );
+    
+    console.log(`✅ WABA ${wabaId} subscribed to webhooks:`, res.data);
+    return res.data;
+  } catch (err: any) {
+    console.error(
+      `❌ Failed to subscribe WABA ${wabaId}:`,
+      err.response?.data ?? err.message,
+    );
+    // Don't throw - allow other WABAs to be processed
+    return null;
   }
 };

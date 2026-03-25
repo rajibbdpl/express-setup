@@ -7,12 +7,13 @@ import {
   subscribeAppToInstagramWebhook,
   subscribeAppToFacebookPageWebhook,
   subscribeAppToWhatsAppWebhook,
+  subscribeWabaToWebhook,
 } from "@/utils/meta";
 import { auth } from "@/lib/auth";
 
 const oauthRouter = Router();
 
-const { META_APP_ID, META_REDIRECT_URI, META_APP_SECRET } = metaConfig;
+const { META_APP_ID, META_REDIRECT_URI, META_APP_SECRET, WHATSAPP_BUSINESS_ACCOUNT_ID } = metaConfig;
 
 // ============================================
 // TIKTOK OAUTH ROUTES (Existing)
@@ -713,6 +714,50 @@ oauthRouter.get("/meta/callback/whatsapp", async (req, res) => {
     );
     const tokenExpiry = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
+    // ============================================
+    // PERMISSION DEBUGGING - Check what permissions were actually granted
+    // ============================================
+    console.log("🔍 Checking granted permissions...");
+    let grantedPermissions: string[] = [];
+    let declinedPermissions: string[] = [];
+
+    try {
+      const permissionsRes = await axios.get(
+        `https://graph.facebook.com/v19.0/me/permissions`,
+        {
+          params: { access_token: longLivedToken },
+        },
+      );
+
+      const allPermissions = permissionsRes.data.data || [];
+      grantedPermissions = allPermissions
+        .filter((p: any) => p.status === "granted")
+        .map((p: any) => p.permission);
+      declinedPermissions = allPermissions
+        .filter((p: any) => p.status === "declined")
+        .map((p: any) => p.permission);
+
+      console.log("✅ Granted permissions:", grantedPermissions.join(", "));
+      if (declinedPermissions.length > 0) {
+        console.warn(
+          "⚠️ Declined permissions:",
+          declinedPermissions.join(", "),
+        );
+      }
+    } catch (permErr: any) {
+      console.warn(
+        "⚠️ Could not check permissions:",
+        permErr.response?.data?.error?.message || permErr.message,
+      );
+    }
+
+    const hasBusinessManagement = grantedPermissions.includes(
+      "business_management",
+    );
+    const hasWhatsappManagement = grantedPermissions.includes(
+      "whatsapp_business_management",
+    );
+
     // Get user info
     const meRes = await axios.get(`https://graph.facebook.com/v19.0/me`, {
       params: { access_token: longLivedToken, fields: "id,name,email" },
@@ -749,28 +794,102 @@ oauthRouter.get("/meta/callback/whatsapp", async (req, res) => {
       },
     });
 
-    // Fetch WhatsApp Business Accounts from Business Manager
+    // ============================================
+    // FETCH WHATSAPP BUSINESS ACCOUNTS
+    // Try multiple methods based on available permissions
+    // ============================================
     console.log("🔄 Fetching WhatsApp Business Accounts...");
 
-    // Get user's businesses
-    const businessesRes = await axios.get(
-      `https://graph.facebook.com/v19.0/me/businesses`,
-      {
-        params: {
-          access_token: longLivedToken,
-          fields: "id,name",
-        },
-      },
-    );
+    // Track connection status for user feedback
+    let totalWABAsFound = 0;
+    let totalPhonesSaved = 0;
+    let wabaDiscoveryMethod = "";
+    const connectionWarnings: string[] = [];
 
-    const businesses = businessesRes.data.data || [];
-    console.log(`Found ${businesses.length} businesses`);
-
-    for (const business of businesses) {
+    // Helper function to process a WABA (get phone numbers and save)
+    const processWABA = async (
+      waba: { id: string; name?: string },
+      accessToken: string,
+    ) => {
       try {
-        // Get WhatsApp Business Accounts for this business
+        // Get phone numbers for this WABA
+        const phonesRes = await axios.get(
+          `https://graph.facebook.com/v19.0/${waba.id}/phone_numbers`,
+          {
+            params: {
+              access_token: accessToken,
+              fields: "id,display_phone_number,verified_name,quality_rating",
+            },
+          },
+        );
+
+        const phones = phonesRes.data.data || [];
+        console.log(
+          `Found ${phones.length} phone numbers in WABA ${waba.name || waba.id}`,
+        );
+
+        for (const phone of phones) {
+          await prisma.whatsAppAccount.upsert({
+            where: { phoneNumberId: phone.id },
+            create: {
+              userId: userId,
+              phoneNumberId: phone.id,
+              businessAccountId: waba.id,
+              phoneNumber: phone.display_phone_number,
+              displayName: phone.verified_name || waba.name,
+              systemUserToken: accessToken,
+            },
+            update: {
+              businessAccountId: waba.id,
+              phoneNumber: phone.display_phone_number,
+              displayName: phone.verified_name || waba.name,
+              systemUserToken: accessToken,
+            },
+          });
+          console.log(
+            `✅ WhatsApp account saved: ${phone.verified_name} (${phone.display_phone_number})`,
+          );
+          totalPhonesSaved++;
+        }
+
+        // Subscribe this WABA to webhooks individually
+        try {
+          console.log(
+            `🔄 Subscribing WABA ${waba.name || waba.id} to webhooks...`,
+          );
+          await subscribeWabaToWebhook(waba.id, accessToken);
+          console.log(
+            `✅ WABA ${waba.name || waba.id} webhook subscription completed`,
+          );
+        } catch (wabaSubErr: any) {
+          console.warn(
+            `⚠️ WABA webhook subscription failed for ${waba.id}:`,
+            wabaSubErr.response?.data?.error?.message || wabaSubErr.message,
+          );
+          connectionWarnings.push(
+            `Webhook subscription failed for ${waba.name || waba.id}`,
+          );
+        }
+
+        return phones.length;
+      } catch (phoneErr: any) {
+        console.warn(
+          `⚠️ Could not fetch phone numbers for WABA ${waba.id}:`,
+          phoneErr.response?.data?.error?.message || phoneErr.message,
+        );
+        return 0;
+      }
+    };
+
+    // METHOD 0: Use known WABA ID from config (most reliable)
+    if (WHATSAPP_BUSINESS_ACCOUNT_ID) {
+      console.log("📍 Method 0: Using known WABA ID from config");
+      wabaDiscoveryMethod = "config_waba_id";
+
+      try {
+        // First, get the WABA details
         const wabaRes = await axios.get(
-          `https://graph.facebook.com/v19.0/${business.id}/owned_whatsapp_business_accounts`,
+          `https://graph.facebook.com/v19.0/${WHATSAPP_BUSINESS_ACCOUNT_ID}`,
           {
             params: {
               access_token: longLivedToken,
@@ -779,82 +898,338 @@ oauthRouter.get("/meta/callback/whatsapp", async (req, res) => {
           },
         );
 
-        const wabas = wabaRes.data.data || [];
-        console.log(
-          `Found ${wabas.length} WhatsApp Business Accounts in ${business.name}`,
+        const waba = wabaRes.data;
+        console.log(`✅ Found WABA from config: ${waba.name || waba.id}`);
+        totalWABAsFound = 1;
+
+        // Process this WABA to get phone numbers
+        await processWABA(waba, longLivedToken);
+      } catch (wabaErr: any) {
+        console.warn(
+          "⚠️ Could not fetch WABA from config ID:",
+          wabaErr.response?.data?.error?.message || wabaErr.message,
+        );
+        // Continue to other methods if this fails
+        totalWABAsFound = 0;
+      }
+    }
+
+    // METHOD 1: Try via Business Manager (requires business_management permission)
+    if (hasBusinessManagement) {
+      console.log(
+        "📍 Method 1: Fetching via Business Manager (business_management granted)",
+      );
+      wabaDiscoveryMethod = "business_manager";
+
+      try {
+        const businessesRes = await axios.get(
+          `https://graph.facebook.com/v19.0/me/businesses`,
+          {
+            params: {
+              access_token: longLivedToken,
+              fields: "id,name",
+            },
+          },
         );
 
-        for (const waba of wabas) {
+        const businesses = businessesRes.data.data || [];
+        console.log(`Found ${businesses.length} businesses`);
+
+        for (const business of businesses) {
           try {
-            // Get phone numbers for this WABA
-            const phonesRes = await axios.get(
-              `https://graph.facebook.com/v19.0/${waba.id}/phone_numbers`,
+            const wabaRes = await axios.get(
+              `https://graph.facebook.com/v19.0/${business.id}/owned_whatsapp_business_accounts`,
               {
                 params: {
                   access_token: longLivedToken,
-                  fields:
-                    "id,display_phone_number,verified_name,quality_rating",
+                  fields: "id,name,timezone_id",
                 },
               },
             );
 
-            const phones = phonesRes.data.data || [];
+            const wabas = wabaRes.data.data || [];
             console.log(
-              `Found ${phones.length} phone numbers in WABA ${waba.name || waba.id}`,
+              `Found ${wabas.length} WhatsApp Business Accounts in ${business.name}`,
             );
+            totalWABAsFound += wabas.length;
 
-            for (const phone of phones) {
-              await prisma.whatsAppAccount.upsert({
-                where: { phoneNumberId: phone.id },
-                create: {
-                  userId: userId,
-                  phoneNumberId: phone.id,
-                  businessAccountId: waba.id,
-                  phoneNumber: phone.display_phone_number,
-                  displayName: phone.verified_name || waba.name,
-                  systemUserToken: longLivedToken,
-                },
-                update: {
-                  businessAccountId: waba.id,
-                  phoneNumber: phone.display_phone_number,
-                  displayName: phone.verified_name || waba.name,
-                  systemUserToken: longLivedToken,
-                },
-              });
-              console.log(
-                `✅ WhatsApp account saved: ${phone.verified_name} (${phone.display_phone_number})`,
-              );
+            for (const waba of wabas) {
+              await processWABA(waba, longLivedToken);
             }
-          } catch (phoneErr: any) {
+          } catch (wabaErr: any) {
             console.warn(
-              `⚠️ Could not fetch phone numbers for WABA ${waba.id}:`,
-              phoneErr.response?.data?.error?.message || phoneErr.message,
+              `⚠️ Could not fetch WABAs for business ${business.name}:`,
+              wabaErr.response?.data?.error?.message || wabaErr.message,
             );
           }
         }
-      } catch (wabaErr: any) {
+      } catch (bizErr: any) {
         console.warn(
-          `⚠️ Could not fetch WABAs for business ${business.name}:`,
-          wabaErr.response?.data?.error?.message || wabaErr.message,
+          "⚠️ Could not fetch businesses:",
+          bizErr.response?.data?.error?.message || bizErr.message,
+        );
+      }
+    } else {
+      console.log(
+        "⚠️ business_management permission not granted, skipping Business Manager method",
+      );
+    }
+
+    // METHOD 2: Use whatsapp_business_management permission directly
+    // Query WABAs that the user has been granted access to
+    if (totalWABAsFound === 0 && hasWhatsappManagement) {
+      console.log(
+        "📍 Method 2: Querying WABAs with whatsapp_business_management permission",
+      );
+      wabaDiscoveryMethod = "waba_direct";
+
+      try {
+        // Try to get WABAs directly - this works if user has been granted access to specific WABAs
+        // First, let's try the token debug info to see what resources are accessible
+        const debugRes = await axios.get(
+          `https://graph.facebook.com/v19.0/debug_token`,
+          {
+            params: {
+              input_token: longLivedToken,
+              access_token: `${META_APP_ID}|${META_APP_SECRET}`,
+            },
+          },
+        );
+
+        const grantedPermissions = debugRes.data?.data?.permissions || [];
+        console.log(
+          "🔍 Token debug - granted permissions:",
+          grantedPermissions.map((p: any) => p.permission).join(", "),
+        );
+
+        // Try to query for WABAs using the businesses the token has access to
+        // The issue is that /me/businesses returns businesses but we need business-level permission
+        // Let's try a different approach - query for WABAs directly if we know the ID
+      } catch (debugErr: any) {
+        console.warn(
+          "⚠️ Token debug failed:",
+          debugErr.response?.data?.error?.message || debugErr.message,
+        );
+      }
+
+      // Alternative: Try querying WABAs via the user's business manager directly
+      try {
+        // This endpoint might work if the user has WABAs in their Business Manager
+        const wabaDirectRes = await axios.get(
+          `https://graph.facebook.com/v19.0/me`,
+          {
+            params: {
+              access_token: longLivedToken,
+              fields: "id,name",
+            },
+          },
+        );
+
+        // Now try to get businesses with more specific WABA fields
+        const bizWithWaba = await axios.get(
+          `https://graph.facebook.com/v19.0/me/businesses`,
+          {
+            params: {
+              access_token: longLivedToken,
+              fields:
+                "id,name,owned_whatsapp_business_accounts{id,name,timezone_id}",
+            },
+          },
+        );
+
+        const businesses = bizWithWaba.data.data || [];
+        for (const business of businesses) {
+          if (business.owned_whatsapp_business_accounts) {
+            const wabas = business.owned_whatsapp_business_accounts.data || [];
+            console.log(
+              `Found ${wabas.length} WABAs in ${business.name} via expanded query`,
+            );
+            totalWABAsFound += wabas.length;
+
+            for (const waba of wabas) {
+              await processWABA(waba, longLivedToken);
+            }
+          }
+        }
+      } catch (expandedErr: any) {
+        console.warn(
+          "⚠️ Expanded WABA query failed:",
+          expandedErr.response?.data?.error?.message || expandedErr.message,
         );
       }
     }
 
-    // Subscribe app to WhatsApp webhooks
-    try {
-      console.log("🔄 Subscribing app to WhatsApp webhooks...");
-      await subscribeAppToWhatsAppWebhook();
-      console.log("✅ WhatsApp webhook subscription completed");
-    } catch (waWebhookErr: any) {
-      console.warn(
-        "⚠️ WhatsApp webhook subscription failed (may already be subscribed):",
-        waWebhookErr.response?.data?.error?.message || waWebhookErr.message,
-      );
+    // METHOD 3: Try direct /me endpoint with WABA fields
+    if (totalWABAsFound === 0 && hasWhatsappManagement) {
+      console.log("📍 Method 3: Trying direct /me endpoint with WABA fields");
+      wabaDiscoveryMethod = "me_endpoint";
+
+      try {
+        const meWabaRes = await axios.get(
+          `https://graph.facebook.com/v19.0/me`,
+          {
+            params: {
+              access_token: longLivedToken,
+              fields:
+                "id,name,owned_whatsapp_business_accounts{id,name,timezone_id}",
+            },
+          },
+        );
+
+        const wabas =
+          meWabaRes.data.owned_whatsapp_business_accounts?.data || [];
+        console.log(
+          `Found ${wabas.length} WhatsApp Business Accounts via /me endpoint`,
+        );
+        totalWABAsFound += wabas.length;
+
+        for (const waba of wabas) {
+          await processWABA(waba, longLivedToken);
+        }
+      } catch (directErr: any) {
+        console.warn(
+          "⚠️ Direct /me WABA query failed:",
+          directErr.response?.data?.error?.message || directErr.message,
+        );
+      }
     }
 
-    return res.redirect(
-      `${process.env.ALLOWED_ORIGINS}/dashboard?whatsapp=connected`,
-    );
+    // METHOD 4: Last resort - Try to get WABAs via user's granted accounts (pages)
+    if (totalWABAsFound === 0) {
+      console.log(
+        "📍 Method 4: Trying to find WABAs via user's granted pages/accounts",
+      );
+      wabaDiscoveryMethod = "user_accounts";
+
+      try {
+        // This endpoint returns pages the user has access to
+        const accountsRes = await axios.get(
+          `https://graph.facebook.com/v19.0/me/accounts`,
+          {
+            params: {
+              access_token: longLivedToken,
+              fields: "id,name,category,access_token",
+            },
+          },
+        );
+
+        const accounts = accountsRes.data.data || [];
+        console.log(`Found ${accounts.length} accounts (pages)`);
+
+        // For each page, try to see if it has WhatsApp integration
+        for (const account of accounts) {
+          try {
+            // Check if this page has any associated WABAs
+            const checkWaba = await axios.get(
+              `https://graph.facebook.com/v19.0/${account.id}`,
+              {
+                params: {
+                  access_token: longLivedToken,
+                  fields: "id,name,owned_whatsapp_business_accounts",
+                },
+              },
+            );
+
+            if (checkWaba.data.owned_whatsapp_business_accounts) {
+              const wabas =
+                checkWaba.data.owned_whatsapp_business_accounts.data || [];
+              totalWABAsFound += wabas.length;
+
+              for (const waba of wabas) {
+                await processWABA(waba, longLivedToken);
+              }
+            }
+          } catch (accErr: any) {
+            // Silently skip accounts that don't have WABA access
+          }
+        }
+      } catch (accErr: any) {
+        console.warn(
+          "⚠️ User accounts query failed:",
+          accErr.response?.data?.error?.message || accErr.message,
+        );
+      }
+    }
+
+    // METHOD 5: If still no WABAs found, try to use the token to query known WABA patterns
+    if (totalWABAsFound === 0 && hasWhatsappManagement) {
+      console.log(
+        "📍 Method 5: Trying to find WABAs via commerce merchant settings",
+      );
+      wabaDiscoveryMethod = "commerce_settings";
+
+      try {
+        // Some WABAs are accessible via commerce settings
+        const commerceRes = await axios.get(
+          `https://graph.facebook.com/v19.0/me`,
+          {
+            params: {
+              access_token: longLivedToken,
+              fields:
+                "id,name,commerce_merchant_settings{owned_whatsapp_business_accounts}",
+            },
+          },
+        );
+
+        const merchantSettings = commerceRes.data.commerce_merchant_settings;
+        if (merchantSettings?.owned_whatsapp_business_accounts) {
+          const wabas =
+            merchantSettings.owned_whatsapp_business_accounts.data || [];
+          console.log(`Found ${wabas.length} WABAs via commerce settings`);
+          totalWABAsFound += wabas.length;
+
+          for (const waba of wabas) {
+            await processWABA(waba, longLivedToken);
+          }
+        }
+      } catch (commerceErr: any) {
+        console.warn(
+          "⚠️ Commerce settings query failed:",
+          commerceErr.response?.data?.error?.message || commerceErr.message,
+        );
+      }
+    }
+
+    // Log final status
+    console.log(`📊 WABA Discovery Summary:`);
+    console.log(`   - Method used: ${wabaDiscoveryMethod}`);
+    console.log(`   - WABAs found: ${totalWABAsFound}`);
+    console.log(`   - Phone numbers saved: ${totalPhonesSaved}`);
+    if (connectionWarnings.length > 0) {
+      console.log(`   - Warnings: ${connectionWarnings.join(", ")}`);
+    }
+
+    // Subscribe app to WhatsApp webhooks (non-blocking - may fail due to permissions)
+    // This is optional since WABA-level subscriptions should work independently
+    try {
+      console.log("🔄 Subscribing app to WhatsApp webhooks (optional)...");
+      await subscribeAppToWhatsAppWebhook();
+      console.log("✅ App-level WhatsApp webhook subscription completed");
+    } catch (waWebhookErr: any) {
+      const errorMsg =
+        waWebhookErr.response?.data?.error?.error_user_msg ||
+        waWebhookErr.response?.data?.error?.message ||
+        waWebhookErr.message;
+      console.warn(
+        "⚠️ App-level webhook subscription failed (non-critical):",
+        errorMsg,
+      );
+      console.warn(
+        "⚠️ Relying on WABA-level subscriptions for webhook delivery",
+      );
+      // Don't add to warnings since this is expected and WABA-level should work
+    }
+
+    // Build redirect URL with status info
+    let redirectUrl = `${process.env.ALLOWED_ORIGINS}/dashboard?whatsapp=connected`;
+    if (totalPhonesSaved === 0) {
+      redirectUrl = `${process.env.ALLOWED_ORIGINS}/dashboard?whatsapp=partial&message=no_accounts_found`;
+    }
+    if (!hasBusinessManagement) {
+      redirectUrl += "&limited_permissions=true";
+    }
+
+    return res.redirect(redirectUrl);
   } catch (err: any) {
     console.error("WhatsApp callback error:", err.response?.data ?? err.message);
     return res.redirect(

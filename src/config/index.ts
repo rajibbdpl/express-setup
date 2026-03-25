@@ -19,6 +19,7 @@ export const metaConfig = {
   META_USER_ACCESS_TOKEN: process.env.META_USER_ACCESS_TOKEN,
   META_REDIRECT_URI: process.env.META_REDIRECT_URI,
   WEBHOOK_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN,
+  WHATSAPP_BUSINESS_ACCOUNT_ID: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID,
 };
 
 export const tiktokConfig = {};
