@@ -227,16 +227,11 @@ oauthRouter.get("/facebook", async (req: Request, res: Response) => {
   });
 
   const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?${params}`;
-  console.log("Facebook Auth URL:", authUrl);
-
   res.redirect(authUrl);
 });
 
-// Callback route matches redirect_uri: {META_REDIRECT_URI}/facebook
 oauthRouter.get("/meta/callback/facebook", async (req, res) => {
   const { code, error, state } = req.query;
-  console.log("🚀 Facebook callback - req.query:", req.query);
-
   const userId = state as string;
 
   if (error) {
@@ -244,14 +239,8 @@ oauthRouter.get("/meta/callback/facebook", async (req, res) => {
       `${process.env.ALLOWED_ORIGINS}/dashboard?error=${error}`,
     );
   }
-
-  if (!code) {
-    return res.status(400).json({ error: "Missing code" });
-  }
-
-  if (!userId) {
-    return res.status(401).json({ error: "Invalid session" });
-  }
+  if (!code) return res.status(400).json({ error: "Missing code" });
+  if (!userId) return res.status(401).json({ error: "Invalid session" });
 
   try {
     // Exchange code for short-lived token
@@ -281,20 +270,43 @@ oauthRouter.get("/meta/callback/facebook", async (req, res) => {
       },
     );
     const longLivedToken = longLivedRes.data.access_token;
-
-    console.log(
-      "Facebook Long lived token (first 30 chars):",
-      longLivedToken?.substring(0, 30),
-    );
     const tokenExpiry = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
     // Get user info
     const meRes = await axios.get(`https://graph.facebook.com/v19.0/me`, {
       params: { access_token: longLivedToken, fields: "id,name,email" },
     });
-    const { id: metaUserId, name } = meRes.data;
+    const { id: metaUserId } = meRes.data;
 
-    // Get user's pages
+    // Handle existing meta user conflict
+    const existingMetaUser = await prisma.user.findUnique({
+      where: { metaUserId },
+    });
+    if (existingMetaUser && existingMetaUser.id !== userId) {
+      await prisma.metaPage.deleteMany({
+        where: { userId: existingMetaUser.id },
+      });
+      await prisma.user.update({
+        where: { id: existingMetaUser.id },
+        data: {
+          metaUserId: null,
+          metaAccessToken: null,
+          metaTokenExpiry: null,
+        },
+      });
+    }
+
+    // Update user with Meta tokens
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        metaUserId,
+        metaAccessToken: longLivedToken,
+        metaTokenExpiry: tokenExpiry,
+      },
+    });
+
+    // Get pages
     const pagesRes = await axios.get(
       `https://graph.facebook.com/v19.0/me/accounts`,
       {
@@ -311,44 +323,12 @@ oauthRouter.get("/meta/callback/facebook", async (req, res) => {
       category: string;
     }>;
 
-    console.log("Facebook Pages found:", pages.length);
-
-    // Handle existing meta user
-    const existingMetaUser = await prisma.user.findUnique({
-      where: { metaUserId },
-    });
-
-    if (existingMetaUser && existingMetaUser.id !== userId) {
-      await prisma.metaPage.deleteMany({
-        where: { userId: existingMetaUser.id },
-      });
-
-      await prisma.user.update({
-        where: { id: existingMetaUser.id },
-        data: {
-          metaUserId: null,
-          metaAccessToken: null,
-          metaTokenExpiry: null,
-        },
-      });
-    }
-
-    // Update user with Meta info
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        metaUserId,
-        metaAccessToken: longLivedToken,
-        metaTokenExpiry: tokenExpiry,
-      },
-    });
-
-    // Save pages and subscribe to webhooks
+    // Save pages only — no Instagram fetching
     for (const page of pages) {
       await prisma.metaPage.upsert({
         where: { pageId: page.id },
         create: {
-          userId: userId,
+          userId,
           pageId: page.id,
           pageName: page.name,
           pageCategory: page.category,
@@ -361,19 +341,15 @@ oauthRouter.get("/meta/callback/facebook", async (req, res) => {
         },
       });
 
-      // Subscribe page to webhooks
       await subscribePageToWebHook(page.id, page.access_token);
       console.log(`✅ Facebook page ${page.name} saved and subscribed`);
     }
 
-    // Subscribe app to Facebook Page webhooks
     try {
-      console.log("🔄 Subscribing app to Facebook Page webhooks...");
       await subscribeAppToFacebookPageWebhook();
-      console.log("✅ Facebook Page webhook subscription completed");
     } catch (fbWebhookErr: any) {
       console.warn(
-        "⚠️ Facebook Page webhook subscription failed (may already be subscribed):",
+        "⚠️ Facebook webhook subscription failed:",
         fbWebhookErr.response?.data?.error?.message || fbWebhookErr.message,
       );
     }
@@ -382,7 +358,10 @@ oauthRouter.get("/meta/callback/facebook", async (req, res) => {
       `${process.env.ALLOWED_ORIGINS}/dashboard?facebook=connected`,
     );
   } catch (err: any) {
-    console.error("Facebook callback error:", err.response?.data ?? err.message);
+    console.error(
+      "Facebook callback error:",
+      err.response?.data ?? err.message,
+    );
     return res.redirect(
       `${process.env.ALLOWED_ORIGINS}/dashboard?error=oauth_failed`,
     );
@@ -421,15 +400,11 @@ oauthRouter.get("/instagram", async (req: Request, res: Response) => {
   });
 
   const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?${params}`;
-  console.log("Instagram Auth URL:", authUrl);
-
   res.redirect(authUrl);
 });
 
 oauthRouter.get("/meta/callback/instagram", async (req, res) => {
   const { code, error, state } = req.query;
-  console.log("🚀 Instagram callback - req.query:", req.query);
-
   const userId = state as string;
 
   if (error) {
@@ -437,14 +412,8 @@ oauthRouter.get("/meta/callback/instagram", async (req, res) => {
       `${process.env.ALLOWED_ORIGINS}/dashboard?error=${error}`,
     );
   }
-
-  if (!code) {
-    return res.status(400).json({ error: "Missing code" });
-  }
-
-  if (!userId) {
-    return res.status(401).json({ error: "Invalid session" });
-  }
+  if (!code) return res.status(400).json({ error: "Missing code" });
+  if (!userId) return res.status(401).json({ error: "Invalid session" });
 
   try {
     // Exchange code for short-lived token
@@ -474,20 +443,19 @@ oauthRouter.get("/meta/callback/instagram", async (req, res) => {
       },
     );
     const longLivedToken = longLivedRes.data.access_token;
-
-    console.log(
-      "Instagram Long lived token (first 30 chars):",
-      longLivedToken?.substring(0, 30),
-    );
     const tokenExpiry = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
     // Get user info
     const meRes = await axios.get(`https://graph.facebook.com/v19.0/me`, {
       params: { access_token: longLivedToken, fields: "id,name,email" },
     });
-    const { id: metaUserId, name } = meRes.data;
+    const { id: metaUserId } = meRes.data;
 
-    // Get user's pages
+    // NOTE: Instagram tokens are now stored in InstagramAccount, not User
+    // This makes Instagram independent from Facebook
+    // We do NOT update User.metaAccessToken here
+
+    // Get pages - but DO NOT save them to MetaPage table (Instagram should be independent)
     const pagesRes = await axios.get(
       `https://graph.facebook.com/v19.0/me/accounts`,
       {
@@ -504,57 +472,9 @@ oauthRouter.get("/meta/callback/instagram", async (req, res) => {
       category: string;
     }>;
 
-    console.log("Pages for Instagram:", pages.length);
-
-    // Handle existing meta user
-    const existingMetaUser = await prisma.user.findUnique({
-      where: { metaUserId },
-    });
-
-    if (existingMetaUser && existingMetaUser.id !== userId) {
-      await prisma.metaPage.deleteMany({
-        where: { userId: existingMetaUser.id },
-      });
-
-      await prisma.user.update({
-        where: { id: existingMetaUser.id },
-        data: {
-          metaUserId: null,
-          metaAccessToken: null,
-          metaTokenExpiry: null,
-        },
-      });
-    }
-
-    // Update user with Meta info
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        metaUserId,
-        metaAccessToken: longLivedToken,
-        metaTokenExpiry: tokenExpiry,
-      },
-    });
-
-    // Save pages and fetch Instagram accounts
+    // Fetch and save Instagram accounts WITHOUT saving MetaPage records
+    // This keeps Instagram independent from Facebook
     for (const page of pages) {
-      const metaPage = await prisma.metaPage.upsert({
-        where: { pageId: page.id },
-        create: {
-          userId: userId,
-          pageId: page.id,
-          pageName: page.name,
-          pageCategory: page.category,
-          pageAccessToken: page.access_token,
-        },
-        update: {
-          userId,
-          pageName: page.name,
-          pageAccessToken: page.access_token,
-        },
-      });
-
-      // Fetch Instagram Business Account linked to this page
       try {
         const igRes = await axios.get(
           `https://graph.facebook.com/v19.0/${page.id}`,
@@ -570,25 +490,42 @@ oauthRouter.get("/meta/callback/instagram", async (req, res) => {
         const igAccount = igRes.data.instagram_business_account;
 
         if (igAccount) {
+          // Save Instagram account directly without linking to MetaPage
           await prisma.instagramAccount.upsert({
             where: { igAccountId: igAccount.id },
             create: {
-              metaPageId: metaPage.id,
+              metaPageId: null, // Not linked to any MetaPage - independent Instagram
               igAccountId: igAccount.id,
               username: igAccount.username,
               name: igAccount.name,
+              userId,
               profilePicUrl: igAccount.profile_picture_url,
               followersCount: igAccount.followers_count,
+              // Store Instagram-specific tokens (independent from Facebook)
+              metaUserId,
+              metaAccessToken: longLivedToken,
+              metaTokenExpiry: tokenExpiry,
+              // Store page info for messaging (required by Meta API)
+              pageId: page.id,
+              pageAccessToken: page.access_token,
             },
             update: {
+              metaPageId: null, // Keep it independent
               username: igAccount.username,
               name: igAccount.name,
               profilePicUrl: igAccount.profile_picture_url,
               followersCount: igAccount.followers_count,
+              // Update Instagram-specific tokens on reconnect
+              metaUserId,
+              metaAccessToken: longLivedToken,
+              metaTokenExpiry: tokenExpiry,
+              // Update page info for messaging
+              pageId: page.id,
+              pageAccessToken: page.access_token,
             },
           });
           console.log(
-            `✅ Instagram account @${igAccount.username} linked to page ${page.name}`,
+            `✅ Instagram account @${igAccount.username} connected (independent)`,
           );
         }
       } catch (igErr: any) {
@@ -598,18 +535,15 @@ oauthRouter.get("/meta/callback/instagram", async (req, res) => {
         );
       }
 
-      // Subscribe page to webhooks
+      // Still subscribe to webhook for messaging (needed for Instagram API)
       await subscribePageToWebHook(page.id, page.access_token);
     }
 
-    // Subscribe app to Instagram webhooks
     try {
-      console.log("🔄 Subscribing app to Instagram webhooks...");
       await subscribeAppToInstagramWebhook();
-      console.log("✅ Instagram webhook subscription completed");
     } catch (igWebhookErr: any) {
       console.warn(
-        "⚠️ Instagram webhook subscription failed (may already be subscribed):",
+        "⚠️ Instagram webhook subscription failed:",
         igWebhookErr.response?.data?.error?.message || igWebhookErr.message,
       );
     }
@@ -618,7 +552,10 @@ oauthRouter.get("/meta/callback/instagram", async (req, res) => {
       `${process.env.ALLOWED_ORIGINS}/dashboard?instagram=connected`,
     );
   } catch (err: any) {
-    console.error("Instagram callback error:", err.response?.data ?? err.message);
+    console.error(
+      "Instagram callback error:",
+      err.response?.data ?? err.message,
+    );
     return res.redirect(
       `${process.env.ALLOWED_ORIGINS}/dashboard?error=oauth_failed`,
     );

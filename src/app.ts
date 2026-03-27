@@ -64,7 +64,6 @@ app.use(
 app.use("/api/auth", toNodeHandler(auth));
 
 app.use("/oauth", oauthRouter);
-app.use("/auth", oauthRouter);
 app.use("/api/v1/tiktok", tiktokRouter);
 app.use("/api/v1/accounts", accountsRouter);
 app.use("/api/v1/facebook", facebookRouter);

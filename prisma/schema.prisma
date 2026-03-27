@@ -1,6 +1,6 @@
 generator client {
   provider = "prisma-client-js"
-  output = "../src/generated/prisma/client"
+  output   = "../src/generated/prisma/client"
 }
 
 datasource db {
@@ -8,13 +8,13 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  emailVerified Boolean   @default(false)
+  id            String   @id @default(cuid())
+  email         String   @unique
+  emailVerified Boolean  @default(false)
   name          String?
   image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Meta OAuth
   metaUserId      String?   @unique
@@ -22,25 +22,26 @@ model User {
   metaTokenExpiry DateTime?
 
   // Relations
-  sessions         Session[]
-  accounts         Account[]
-  verifications    Verification[]
-  metaPages        MetaPage[]
-  whatsappAccounts WhatsAppAccount[]
-  tiktokAccounts   TikTokAccount[]
+  sessions          Session[]
+  accounts          Account[]
+  verifications     Verification[]
+  metaPages         MetaPage[]
+  whatsappAccounts  WhatsAppAccount[]
+  tiktokAccounts    TikTokAccount[]
+  instagramAccounts InstagramAccount[]
 
   @@map("users")
 }
 
 model Session {
-  id           String   @id @default(cuid())
-  expiresAt    DateTime
-  token        String   @unique
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  ipAddress    String?
-  userAgent    String?
-  userId       String
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -48,19 +49,19 @@ model Session {
 }
 
 model Account {
-  id                String   @id @default(cuid())
-  accountId         String
-  providerId        String
-  userId            String
-  accessToken       String?
-  refreshToken      String?
-  idToken           String?
-  accessTokenExpiresAt DateTime?
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
   refreshTokenExpiresAt DateTime?
-  scope             String?
-  password          String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -109,17 +110,30 @@ model MetaPage {
 // instagram
 model InstagramAccount {
   id             String   @id @default(cuid())
-  metaPageId     String   @unique
+  metaPageId     String?  @unique
+  userId         String // add direct user relation
   igAccountId    String   @unique // Instagram Business Account ID
   username       String?
   name           String?
   profilePicUrl  String?
   followersCount Int?
+  
+  // Instagram-specific OAuth tokens (independent from Facebook)
+  metaUserId      String?   // Meta user ID who connected this IG account
+  metaAccessToken String?   // Long-lived token for Instagram API calls
+  metaTokenExpiry DateTime? // Token expiration
+  
+  // Page info for independent Instagram messaging (required by Meta API)
+  pageId          String?   // Facebook Page ID associated with this IG account
+  pageAccessToken String?   // Page access token for sending messages
+  
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  metaPage        MetaPage         @relation(fields: [metaPageId], references: [id], onDelete: Cascade)
-  posts           InstagramPost[]
+  metaPage MetaPage?       @relation(fields: [metaPageId], references: [id], onDelete: SetNull)
+  posts    InstagramPost[]
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   igConversations IgConversation[]
 
   @@map("instagram_accounts")
@@ -183,19 +197,19 @@ model IgConversation {
 }
 
 model IgMessage {
-  id              String           @id @default(cuid())
-  conversationId  String
-  igMessageId     String           @unique
-  fromId          String?
-  fromUsername    String?
-  text            String?
-  attachmentUrl   String?
-  attachmentId    String?
-  attachmentType  String?
-  direction       MessageDirection
-  deliveryStatus  DeliveryStatus   @default(PENDING)
-  timestamp       DateTime?
-  createdAt       DateTime         @default(now())
+  id             String           @id @default(cuid())
+  conversationId String
+  igMessageId    String           @unique
+  fromId         String?
+  fromUsername   String?
+  text           String?
+  attachmentUrl  String?
+  attachmentId   String?
+  attachmentType String?
+  direction      MessageDirection
+  deliveryStatus DeliveryStatus   @default(PENDING)
+  timestamp      DateTime?
+  createdAt      DateTime         @default(now())
 
   conversation IgConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -263,26 +277,25 @@ model FacebookConversation {
 }
 
 model FacebookMessage {
-  id              String           @id @default(cuid())
-  conversationId  String
-  fbMessageId     String           @unique
-  fromId          String?
-  fromName        String?
-  text            String?
-  attachmentUrl   String?
-  attachmentId    String?
-  attachmentType  String?
-  direction       MessageDirection
-  deliveryStatus  DeliveryStatus   @default(PENDING)
-  createdTime     DateTime?
-  createdAt       DateTime         @default(now())
+  id             String           @id @default(cuid())
+  conversationId String
+  fbMessageId    String           @unique
+  fromId         String?
+  fromName       String?
+  text           String?
+  attachmentUrl  String?
+  attachmentId   String?
+  attachmentType String?
+  direction      MessageDirection
+  deliveryStatus DeliveryStatus   @default(PENDING)
+  createdTime    DateTime?
+  createdAt      DateTime         @default(now())
 
   conversation FacebookConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdTime(sort: Desc)])
   @@map("facebook_messages")
 }
-
 
 //whatsapp business
 model WhatsAppAccount {
@@ -337,7 +350,6 @@ model WaMessage {
   @@map("wa_messages")
 }
 
-
 // ---- TIKTOK ----
 
 model TikTokAccount {
@@ -350,7 +362,7 @@ model TikTokAccount {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   conversations TikTokConversation[]
 
   @@map("tiktok_accounts")
@@ -365,7 +377,7 @@ model TikTokConversation {
   updatedAt            DateTime @updatedAt
   createdAt            DateTime @default(now())
 
-  tiktokAccount TikTokAccount    @relation(fields: [tiktokAccountId], references: [id], onDelete: Cascade)
+  tiktokAccount TikTokAccount   @relation(fields: [tiktokAccountId], references: [id], onDelete: Cascade)
   messages      TikTokMessage[]
 
   @@index([tiktokAccountId, updatedAt(sort: Desc)])
@@ -381,7 +393,7 @@ model TikTokMessage {
   fromUsername    String?
   text            String?
   attachmentUrl   String?
-  attachmentType  String?          // IMAGE, VIDEO, AUDIO
+  attachmentType  String? // IMAGE, VIDEO, AUDIO
   direction       MessageDirection
   deliveryStatus  DeliveryStatus   @default(PENDING)
   timestamp       DateTime?
@@ -392,7 +404,6 @@ model TikTokMessage {
   @@index([conversationId, timestamp(sort: Desc)])
   @@map("tiktok_messages")
 }
-
 
 //webhook event types
 model WebhookEvent {
@@ -407,7 +418,6 @@ model WebhookEvent {
   @@index([platform, processed])
   @@map("webhook_events")
 }
-
 
 enum MessageDirection {
   INBOUND // received from user
